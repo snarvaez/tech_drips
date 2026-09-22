@@ -84,7 +84,18 @@ flask --app wsgi:app run --debug --port 5000
 
 Open http://127.0.0.1:5000 and search for topics such as `ransomware`, `CRISPR`, `sticky inflation`, or `passkeys`. Matches are grouped under their show, channel, or top-level asset.
 
-Health check: `GET /health`. Search API: `GET /api/search?q=ransomware`.
+Health check: `GET /health`.
+
+Search API — same grouped JSON the page renders (`groups` → `assets` → `passages`, with the playable `href` on each passage):
+
+```bash
+curl -sS 'http://127.0.0.1:5000/api/search?q=ransomware'
+curl -sS -X POST http://127.0.0.1:5000/api/search \
+  -H 'Content-Type: application/json' \
+  -d '{"q":"ransomware"}'
+```
+
+`q` and `query` are accepted as a query parameter or a JSON field.
 
 ### Gunicorn + Nginx
 

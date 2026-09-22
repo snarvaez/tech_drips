@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
-from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qsl, quote, urlencode, urlparse, urlunparse
 
 SPOTIFY_SHOW_ID = "0ibUtrJG4JVgwfvB2MXMSb"
 APPLE_COLLECTION_ID = "1500452446"
@@ -97,3 +97,31 @@ def primary_share_url(doc: dict[str, Any], start_ms: Any = None) -> str:
             apple_id, ms, _stored(doc, "itunes_id") or APPLE_COLLECTION_ID
         )
     return ""
+
+
+def passage_href(asset: dict[str, Any], start_ms: Any, *, listen_base: str = "") -> str:
+    """Playable link the search page opens for this passage."""
+    native = primary_share_url(
+        {"asset": asset, "attrs": asset.get("attrs") or {}},
+        start_ms,
+    )
+    if native:
+        return native
+    asset_id = asset.get("id")
+    if not asset_id:
+        return ""
+    path = "/listen?asset=" + quote(str(asset_id), safe="")
+    if start_ms is not None and start_ms != "":
+        path += "&t=" + str(seconds_from_ms(start_ms))
+    base = (listen_base or "").rstrip("/")
+    return f"{base}{path}" if base else path
+
+
+def with_passage_hrefs(payload: dict[str, Any], listen_base: str = "") -> dict[str, Any]:
+    for group in payload.get("groups") or []:
+        for asset in group.get("assets") or []:
+            for passage in asset.get("passages") or []:
+                passage["href"] = passage_href(
+                    asset, passage.get("start_ms"), listen_base=listen_base
+                )
+    return payload

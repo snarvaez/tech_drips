@@ -3,9 +3,11 @@ from search_app.chunking import chunk_cues, chunk_transcript
 from search_app.srt import Cue, parse_srt_cues, srt_to_text
 from search_app.share import (
     apple_listen_url,
+    passage_href,
     primary_share_url,
     spotify_episode_id_from_transcript_url,
     spotify_listen_url,
+    with_passage_hrefs,
     youtube_listen_url,
 )
 from search_app.search import (
@@ -98,6 +100,49 @@ def test_passage_document_shapes():
     )
     assert "parent" not in repo
     assert repo["asset"]["type"] == "repo"
+
+
+def test_passage_href_matches_the_player_link():
+    video = passage_href(
+        {"type": "video", "id": "T323-B5v1oI", "attrs": {}},
+        64000,
+        listen_base="http://127.0.0.1:5000",
+    )
+    assert video == "https://www.youtube.com/watch?v=T323-B5v1oI&t=64s"
+    episode = passage_href(
+        {
+            "type": "episode",
+            "id": "sn-1043",
+            "attrs": {"spotify_episode_id": "0T15bGPizAqgJgQA3rnsv4"},
+        },
+        11120,
+    )
+    assert episode == "https://open.spotify.com/episode/0T15bGPizAqgJgQA3rnsv4?t=11"
+    local = passage_href(
+        {"type": "snippet", "id": "snippet:8f3a", "attrs": {}},
+        5000,
+        listen_base="http://127.0.0.1:5000",
+    )
+    assert local == "http://127.0.0.1:5000/listen?asset=snippet%3A8f3a&t=5"
+    payload = with_passage_hrefs(
+        {
+            "groups": [
+                {
+                    "assets": [
+                        {
+                            "type": "video",
+                            "id": "abc",
+                            "attrs": {},
+                            "passages": [{"start_ms": 1000}],
+                        }
+                    ]
+                }
+            ]
+        }
+    )
+    assert payload["groups"][0]["assets"][0]["passages"][0]["href"].startswith(
+        "https://www.youtube.com/watch?v=abc&t="
+    )
 
 
 def test_spotify_and_apple_timestamp_urls():

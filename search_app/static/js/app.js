@@ -148,7 +148,7 @@ $(function () {
       episode_title: asset.title,
       text: plainSnippet(snippet.snippet_html),
       start_ms: snippet.start_ms,
-      href: nativeHref(asset, snippet.start_ms),
+      href: snippet.href || nativeHref(asset, snippet.start_ms),
       attrs: attrs,
       spotify_episode_id: attrs.spotify_episode_id,
       apple_track_id: attrs.apple_track_id,

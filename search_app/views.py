@@ -3,6 +3,7 @@ from flask import Blueprint, current_app, jsonify, render_template, request
 from .db import get_snippets, ping
 from .schema import coerce
 from .search import search_topic
+from .share import with_passage_hrefs
 
 bp = Blueprint("main", __name__)
 
@@ -60,9 +61,26 @@ def api_clip():
     )
 
 
-@bp.get("/api/search")
+def _search_query() -> str:
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        body = {}
+    raw = request.values.get("q")
+    if raw is None:
+        raw = request.values.get("query")
+    if raw is None:
+        raw = body.get("q", body.get("query", ""))
+    return str(raw or "")
+
+
+@bp.route("/api/search", methods=["GET", "POST"])
 def api_search():
-    query = request.args.get("q", "")
+    """Same grouped result the search page renders.
+
+    GET  /api/search?q=ransomware
+    POST /api/search  {"q": "ransomware"}
+    """
+    query = _search_query()
     try:
         collection = get_snippets()
         payload = search_topic(
@@ -74,7 +92,7 @@ def api_search():
             limit=current_app.config["SEARCH_LIMIT"],
             snippets_per_episode=current_app.config["SNIPPETS_PER_EPISODE"],
         )
-        return jsonify(payload)
+        return jsonify(with_passage_hrefs(payload, request.host_url))
     except Exception as exc:
         current_app.logger.exception("search failed")
         return jsonify({"error": str(exc), "query": query, "groups": []}), 503

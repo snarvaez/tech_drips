@@ -24,3 +24,15 @@ def test_search_without_mongo_is_service_unavailable():
     response = client.get("/api/search", query_string={"q": "ransomware"})
     assert response.status_code == 503
     assert response.get_json()["query"] == "ransomware"
+
+
+def test_search_post_json_uses_the_same_query():
+    Config.MONGODB_URI = ""
+    close_client()
+    app = create_app()
+    app.config["TESTING"] = True
+    client = app.test_client()
+    response = client.post("/api/search", json={"query": "passkeys"})
+    assert response.status_code == 503
+    assert response.get_json()["query"] == "passkeys"
+    assert response.get_json()["groups"] == []
