@@ -1,6 +1,6 @@
 (function () {
   var params = new URLSearchParams(window.location.search);
-  var episodeId = params.get("episode") || "";
+  var episodeId = params.get("asset") || params.get("episode") || "";
   var t = Number(params.get("t") || 0);
   if (t > 100000) t = Math.floor(t / 1000);
   if (t < 0 || !isFinite(t)) t = 0;
@@ -38,22 +38,24 @@
   }
 
   if (!episodeId) {
-    titleEl.textContent = "Missing episode";
-    statusEl.textContent = "This link has no episode id.";
+    titleEl.textContent = "Missing asset";
+    statusEl.textContent = "This link has no asset id.";
     return;
   }
 
-  fetch("/api/clip?episode=" + encodeURIComponent(episodeId))
+  fetch("/api/clip?asset=" + encodeURIComponent(episodeId))
     .then(function (res) {
-      if (!res.ok) throw new Error("Episode not found");
+      if (!res.ok) throw new Error("Asset not found");
       return res.json();
     })
     .then(function (data) {
-      titleEl.textContent = data.episode_title || "Episode";
-      metaEl.textContent = [data.podcast_title, data.podcast_author]
+      var asset = data.asset || {};
+      var parent = data.parent || {};
+      titleEl.textContent = asset.title || "Clip";
+      metaEl.textContent = [parent.title, parent.author || asset.author]
         .filter(Boolean)
         .join(" · ");
-      document.title = (data.episode_title || "Clip") + " · Transcript Search";
+      document.title = (asset.title || "Clip") + " · Transcript Search";
       if (!data.audio_url) {
         statusEl.textContent = "No audio file is stored for this episode.";
         return;

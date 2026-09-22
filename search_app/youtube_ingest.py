@@ -1,4 +1,4 @@
-"""Ingest MongoDB YouTube captions into the same snippet collection as podcasts."""
+"""Ingest MongoDB YouTube captions into the passages collection."""
 
 from __future__ import annotations
 
@@ -13,11 +13,13 @@ from pymongo.collection import Collection
 from .chunking import chunk_cues
 from .config import Config
 from .ingest import CHUNK_CHARS, _client, retry_mongo
-from .schema import snippet_document
+from .schema import legacy_unset, passage_document, passage_filter
 from .youtube import (
-    PODCAST_AUTHOR,
-    PODCAST_ID,
-    PODCAST_TITLE,
+    CHANNEL_AUTHOR,
+    CHANNEL_ID,
+    CHANNEL_KEY,
+    CHANNEL_TITLE,
+    CHANNEL_URL,
     YoutubeVideo,
     fetch_caption_cues,
     list_channel_videos,
@@ -34,37 +36,45 @@ def upsert_video(collection: Collection, video: YoutubeVideo, cues, source: str)
         duration = str(int(video.duration))
     ops = []
     for index, chunk in enumerate(chunks):
-        doc = snippet_document(
-            source_kind="youtube",
-            source_id=PODCAST_ID,
-            source_title=PODCAST_TITLE,
-            source_author=PODCAST_AUTHOR,
-            item_id=video.video_id,
-            item_title=video.title,
-            item_url=f"https://www.youtube.com/watch?v={video.video_id}",
+        doc = passage_document(
+            asset_type="video",
+            asset_id=video.video_id,
+            title=video.title,
+            url=f"https://www.youtube.com/watch?v={video.video_id}",
+            parent={
+                "type": "channel",
+                "id": CHANNEL_KEY,
+                "title": CHANNEL_TITLE,
+                "author": CHANNEL_AUTHOR,
+                "url": CHANNEL_URL,
+            },
             chunk_index=index,
             text=chunk["text"],
-            youtube_video_id=video.video_id,
-            audio_url="",
             published_at=video.published_at,
-            duration=duration,
             start_ms=chunk.get("start_ms"),
             end_ms=chunk.get("end_ms"),
-            source=source,
+            attrs={
+                "youtube_video_id": video.video_id,
+                "youtube_channel_id": CHANNEL_ID,
+                "duration": duration or None,
+            },
             ingest_source=source,
             ingested_at=now,
             ingest_complete=True,
         )
         ops.append(
             UpdateOne(
-                {"episode_id": video.video_id, "chunk_index": index},
-                {"$set": doc},
+                passage_filter("video", video.video_id, index),
+                {"$set": doc, "$unset": legacy_unset()},
                 upsert=True,
             )
         )
     collection.bulk_write(ops, ordered=False)
     collection.delete_many(
-        {"episode_id": video.video_id, "chunk_index": {"$gte": len(chunks)}}
+        {
+            **passage_filter("video", video.video_id),
+            "chunk_index": {"$gte": len(chunks)},
+        }
     )
     return len(chunks)
 
@@ -78,7 +88,7 @@ def youtube_progress(collection: Collection, video_id: str) -> str:
     """
     docs = list(
         collection.find(
-            {"episode_id": video_id},
+            passage_filter("video", video_id),
             {"chunk_index": 1, "ingest_complete": 1},
         )
     )
@@ -211,8 +221,9 @@ def main(argv: list[str] | None = None) -> int:
                     time.sleep(wait)
                     continue
             time.sleep(max(0.0, args.delay))
-        total = collection.count_documents({"podcast_id": PODCAST_ID})
-        shows = collection.distinct("episode_id", {"podcast_id": PODCAST_ID})
+        channel_filter = {"asset.type": "video", "parent.id": CHANNEL_KEY}
+        total = collection.count_documents(channel_filter)
+        shows = collection.distinct("asset.id", channel_filter)
         print(
             f"YouTube done ingested={ingested} rewritten={rewritten} "
             f"skipped={skipped} failed={failed}"

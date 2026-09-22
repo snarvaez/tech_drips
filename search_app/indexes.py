@@ -12,38 +12,55 @@ from typing import Any
 from pymongo.collection import Collection
 from pymongo.operations import SearchIndexModel
 
-VECTOR_INDEX_NAME = "podcast_vector_index"
-SEARCH_INDEX_NAME = "podcast_search_index"
+VECTOR_INDEX_NAME = "passage_vector_index"
+SEARCH_INDEX_NAME = "passage_search_index"
 EMBEDDING_MODEL = "voyage-4"
+
+LEGACY_INDEXES = (
+    "episode_chunk",
+    "item_chunk",
+    "podcast_published",
+    "source_published",
+    "kind_published",
+)
 
 SNIPPET_VALIDATOR: dict[str, Any] = {
     "$jsonSchema": {
         "bsonType": "object",
-        "required": ["chunk_index", "text"],
+        "required": ["schema_version", "asset", "chunk_index", "text"],
         "properties": {
             "schema_version": {"bsonType": ["int", "long"]},
-            "source_kind": {
-                "enum": [
-                    "podcast",
-                    "youtube",
-                    "github",
-                    "blog",
-                    "social",
-                    "docs",
-                    "other",
-                ]
+            "asset": {
+                "bsonType": "object",
+                "required": ["type", "id", "title"],
+                "properties": {
+                    "type": {"enum": ["episode", "video", "repo", "snippet"]},
+                    "id": {"bsonType": "string", "minLength": 1},
+                    "title": {"bsonType": "string", "minLength": 1},
+                    "url": {"bsonType": "string"},
+                    "author": {"bsonType": "string"},
+                },
             },
-            "source_id": {"bsonType": "string"},
-            "source_title": {"bsonType": "string"},
-            "item_id": {"bsonType": "string"},
-            "item_title": {"bsonType": "string"},
-            "item_url": {"bsonType": "string"},
-            "podcast_id": {"bsonType": "string"},
-            "episode_id": {"bsonType": "string"},
+            "parent": {
+                "bsonType": "object",
+                "required": ["type", "id", "title"],
+                "properties": {
+                    "type": {"enum": ["podcast", "channel"]},
+                    "id": {"bsonType": "string", "minLength": 1},
+                    "title": {"bsonType": "string", "minLength": 1},
+                    "author": {"bsonType": "string"},
+                    "url": {"bsonType": "string"},
+                },
+            },
             "published_at": {"bsonType": "date"},
             "chunk_index": {"bsonType": ["int", "long"], "minimum": 0},
             "start_ms": {"bsonType": ["int", "long", "null"]},
             "end_ms": {"bsonType": ["int", "long", "null"]},
+            "audio_url": {"bsonType": "string"},
+            "attrs": {"bsonType": "object"},
+            "ingest_source": {"bsonType": "string"},
+            "ingested_at": {"bsonType": "date"},
+            "ingest_complete": {"bsonType": "bool"},
             "text": {
                 "bsonType": "string",
                 "minLength": 1,
@@ -62,11 +79,9 @@ VECTOR_INDEX_DEFINITION: dict[str, Any] = {
             "model": EMBEDDING_MODEL,
             "modality": "text",
         },
-        {"type": "filter", "path": "source_kind"},
-        {"type": "filter", "path": "source_id"},
-        {"type": "filter", "path": "item_id"},
-        {"type": "filter", "path": "podcast_id"},
-        {"type": "filter", "path": "episode_id"},
+        {"type": "filter", "path": "asset.type"},
+        {"type": "filter", "path": "asset.id"},
+        {"type": "filter", "path": "parent.id"},
     ]
 }
 
@@ -93,15 +108,22 @@ SEARCH_INDEX_DEFINITION: dict[str, Any] = {
         "dynamic": False,
         "fields": {
             "text": _string_with_fuzzy(),
-            "item_title": _string_with_fuzzy(),
-            "source_title": _string_with_fuzzy(),
-            "episode_title": _string_with_fuzzy(),
-            "podcast_title": _string_with_fuzzy(),
-            "source_kind": {"type": "token"},
-            "source_id": {"type": "token"},
-            "item_id": {"type": "token"},
-            "podcast_id": {"type": "token"},
-            "episode_id": {"type": "token"},
+            "asset": {
+                "type": "document",
+                "fields": {
+                    "title": _string_with_fuzzy(),
+                    "type": {"type": "token"},
+                    "id": {"type": "token"},
+                },
+            },
+            "parent": {
+                "type": "document",
+                "fields": {
+                    "title": _string_with_fuzzy(),
+                    "type": {"type": "token"},
+                    "id": {"type": "token"},
+                },
+            },
         },
     },
 }
@@ -118,28 +140,43 @@ def ensure_collection(db, name: str) -> Collection:
     return db[name]
 
 
+def drop_legacy_indexes(collection: Collection) -> None:
+    existing = {idx["name"] for idx in collection.list_indexes()}
+    for name in LEGACY_INDEXES:
+        if name in existing:
+            collection.drop_index(name)
+
+
+def apply_validator(collection: Collection) -> None:
+    collection.database.command(
+        {
+            "collMod": collection.name,
+            "validator": SNIPPET_VALIDATOR,
+            "validationLevel": "strict",
+            "validationAction": "error",
+        }
+    )
+
+
 def ensure_classic_indexes(collection: Collection) -> None:
+    drop_legacy_indexes(collection)
     collection.create_index(
-        [("episode_id", 1), ("chunk_index", 1)],
+        [("asset.type", 1), ("asset.id", 1), ("chunk_index", 1)],
         unique=True,
-        name="episode_chunk",
+        name="asset_chunk",
     )
     collection.create_index(
-        [("item_id", 1), ("chunk_index", 1)],
-        unique=True,
-        name="item_chunk",
+        [("asset.id", 1)],
+        name="asset_id",
     )
     collection.create_index(
-        [("podcast_id", 1), ("published_at", -1)],
-        name="podcast_published",
+        [("parent.id", 1), ("published_at", -1)],
+        name="parent_published",
+        partialFilterExpression={"parent.id": {"$exists": True}},
     )
     collection.create_index(
-        [("source_id", 1), ("published_at", -1)],
-        name="source_published",
-    )
-    collection.create_index(
-        [("source_kind", 1), ("published_at", -1)],
-        name="kind_published",
+        [("asset.type", 1), ("published_at", -1)],
+        name="asset_type_published",
     )
 
 

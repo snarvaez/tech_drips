@@ -34,10 +34,10 @@ $(function () {
     return h ? h + ":" + pad(m) + ":" + pad(s) : m + ":" + pad(s);
   }
 
-  function listenHref(episodeId, startMs) {
-    if (!episodeId) return "";
+  function listenHref(assetId, startMs) {
+    if (!assetId) return "";
     var u = new URL("/listen", window.location.origin);
-    u.searchParams.set("episode", episodeId);
+    u.searchParams.set("asset", assetId);
     if (startMs != null && startMs !== "") {
       u.searchParams.set("t", String(Math.floor(Number(startMs) / 1000)));
     }
@@ -49,15 +49,36 @@ $(function () {
     return Math.max(0, Math.floor(Number(startMs) / 1000));
   }
 
-  function nativeHref(episode, startMs) {
+  function attrsOf(asset) {
+    return (asset && asset.attrs) || {};
+  }
+
+  function assetIdOf(asset) {
+    return (asset && (asset.asset_id || asset.id || asset.episode_id)) || "";
+  }
+
+  function assetTitleOf(asset) {
+    return (asset && (asset.asset_title || asset.title || asset.episode_title)) || "";
+  }
+
+  function groupTitleOf(item) {
+    return (item && (item.group_title || item.podcast_title)) || "";
+  }
+
+  function nativeHref(asset, startMs) {
     var sec = shareSeconds(startMs);
+    var attrs = attrsOf(asset);
+    var page = (asset && (asset.url || asset.asset_url || asset.episode_url)) || "";
     var yt =
-      (episode && episode.youtube_video_id) ||
+      attrs.youtube_video_id ||
+      (asset && asset.youtube_video_id) ||
+      (asset && (asset.type === "video" || asset.asset_type === "video")
+        ? assetIdOf(asset)
+        : "") ||
       (function () {
         try {
-          var u = episode && episode.episode_url;
-          if (u && u.indexOf("youtube.com/watch") >= 0) {
-            return new URL(u).searchParams.get("v");
+          if (page && page.indexOf("youtube.com/watch") >= 0) {
+            return new URL(page).searchParams.get("v");
           }
         } catch (err) {}
         return "";
@@ -65,26 +86,24 @@ $(function () {
     if (yt) {
       return "https://www.youtube.com/watch?v=" + yt + "&t=" + sec + "s";
     }
-    if (episode && episode.spotify_episode_id) {
-      return (
-        "https://open.spotify.com/episode/" +
-        episode.spotify_episode_id +
-        "?t=" +
-        sec
-      );
+    var spotify = attrs.spotify_episode_id || (asset && asset.spotify_episode_id);
+    if (spotify) {
+      return "https://open.spotify.com/episode/" + spotify + "?t=" + sec;
     }
-    if (episode && episode.apple_track_id) {
-      var collection = episode.itunes_id || "1500452446";
+    var apple = attrs.apple_track_id || (asset && asset.apple_track_id);
+    if (apple) {
+      var collection =
+        attrs.itunes_id || (asset && asset.itunes_id) || "1500452446";
       return (
         "https://podcasts.apple.com/us/podcast/id" +
         collection +
         "?i=" +
-        episode.apple_track_id +
+        apple +
         "&t=" +
         sec
       );
     }
-    return listenHref(episode && episode.episode_id, startMs);
+    return listenHref(assetIdOf(asset), startMs);
   }
 
   function timestampHref(episodeId, startMs, fallbackUrl) {
@@ -92,7 +111,8 @@ $(function () {
   }
 
   bag = bag.map(function (item) {
-    var eid = item.episode_id || String(item.id || "").split(":")[0];
+    var eid = assetIdOf(item) || String(item.id || "").split(":")[0];
+    item.asset_id = eid;
     item.episode_id = eid;
     item.href = nativeHref(item, item.start_ms) || listenHref(eid, item.start_ms);
     return item;
@@ -107,34 +127,45 @@ $(function () {
       .trim();
   }
 
-  function clipId(episode, snippet) {
-    return [episode.episode_id, snippet.chunk_index, snippet.start_ms].join(":");
+  function clipId(asset, snippet) {
+    return [assetIdOf(asset), snippet.chunk_index, snippet.start_ms].join(":");
   }
 
-  function makeClip(show, episode, snippet) {
+  function makeClip(group, asset, snippet) {
+    var attrs = asset.attrs || {};
     return {
-      id: clipId(episode, snippet),
-      episode_id: episode.episode_id,
-      podcast_title: show.podcast_title,
-      episode_title: episode.episode_title,
+      id: clipId(asset, snippet),
+      asset_type: asset.type,
+      asset_id: asset.id,
+      asset_title: asset.title,
+      asset_url: asset.url || "",
+      group_type: group.type,
+      group_id: group.id,
+      group_title: group.title,
+      group_author: group.author || "",
+      episode_id: asset.id,
+      podcast_title: group.title,
+      episode_title: asset.title,
       text: plainSnippet(snippet.snippet_html),
       start_ms: snippet.start_ms,
-      href: nativeHref(episode, snippet.start_ms),
-      spotify_episode_id: episode.spotify_episode_id,
-      apple_track_id: episode.apple_track_id,
-      itunes_id: episode.itunes_id,
-      youtube_video_id: episode.youtube_video_id,
-      audio_url: snippet.audio_url || episode.audio_url || "",
+      href: nativeHref(asset, snippet.start_ms),
+      attrs: attrs,
+      spotify_episode_id: attrs.spotify_episode_id,
+      apple_track_id: attrs.apple_track_id,
+      itunes_id: attrs.itunes_id,
+      youtube_video_id: attrs.youtube_video_id,
+      audio_url: snippet.audio_url || asset.audio_url || "",
     };
   }
 
   function formatClip(item) {
-    var href =
-      item.href || listenHref(item.episode_id, item.start_ms) || "";
+    var href = item.href || listenHref(assetIdOf(item), item.start_ms) || "";
     var lines = [];
     if (href) lines.push(href);
-    if (item.podcast_title) lines.push(item.podcast_title);
-    if (item.episode_title) lines.push(item.episode_title);
+    var groupTitle = groupTitleOf(item);
+    var assetTitle = assetTitleOf(item);
+    if (groupTitle && groupTitle !== assetTitle) lines.push(groupTitle);
+    if (assetTitle) lines.push(assetTitle);
     if (item.start_ms != null && item.start_ms !== "") {
       lines.push("At " + formatClock(item.start_ms));
     }
@@ -218,8 +249,8 @@ $(function () {
     $("#bag-copy, #bag-clear").prop("disabled", bag.length === 0);
     bag.forEach(function (item) {
       var $li = $('<li class="bag-item"></li>');
-      $li.append($('<div class="show-name"></div>').text(item.podcast_title || ""));
-      $li.append($('<div class="ep-name"></div>').text(item.episode_title || ""));
+      $li.append($('<div class="show-name"></div>').text(groupTitleOf(item)));
+      $li.append($('<div class="ep-name"></div>').text(assetTitleOf(item)));
       if (item.start_ms != null && item.start_ms !== "") {
         $li.append($("<div></div>").text("At " + formatClock(item.start_ms)));
       }
@@ -283,12 +314,12 @@ $(function () {
 
   function render(payload) {
     $results.empty();
-    var podcasts = payload.podcasts || [];
+    var groups = payload.groups || [];
     if (!payload.query) {
       $status.attr("hidden", true);
       return;
     }
-    if (!podcasts.length) {
+    if (!groups.length) {
       $status.attr("hidden", true);
       if (payload.warnings && payload.warnings.length) {
         $results.append(
@@ -297,58 +328,59 @@ $(function () {
         return;
       }
       $results.append(
-        '<p class="empty">No matching episodes for “' +
+        '<p class="empty">No matching assets for “' +
           $("<div>").text(payload.query).html() +
           '”.</p>'
       );
       return;
     }
-    var episodeCount = podcasts.reduce(function (n, show) {
-      return n + (show.episodes || []).length;
+    var assetCount = groups.reduce(function (n, group) {
+      return n + (group.assets || []).length;
     }, 0);
     $status
       .text(
-        episodeCount +
-          " episode" +
-          (episodeCount === 1 ? "" : "s") +
-          " across " +
-          podcasts.length +
-          " podcast" +
-          (podcasts.length === 1 ? "" : "s") +
+        assetCount +
+          " asset" +
+          (assetCount === 1 ? "" : "s") +
+          " in " +
+          groups.length +
+          " source" +
+          (groups.length === 1 ? "" : "s") +
           (payload.mode ? " · " + payload.mode : "")
       )
       .removeAttr("hidden");
 
-    podcasts.forEach(function (show) {
+    groups.forEach(function (group) {
       var $show = $('<section class="show"></section>');
       $show.append(
         '<div class="show-head"><h2></h2><span class="author"></span></div>'
       );
-      $show.find("h2").text(show.podcast_title);
-      $show.find(".author").text(show.podcast_author || "");
-      (show.episodes || []).forEach(function (episode) {
+      $show.find("h2").text(group.title || "");
+      $show.find(".author").text(group.author || "");
+      (group.assets || []).forEach(function (asset) {
+        var same = group.type === asset.type && group.id === asset.id;
         var $ep = $('<article class="episode"></article>');
-        var title = $("<h3></h3>");
-        if (episode.episode_url) {
-          title.append(
-            $("<a></a>")
-              .attr({ href: episode.episode_url, target: "_blank", rel: "noopener" })
-              .text(episode.episode_title)
-          );
-        } else {
-          title.text(episode.episode_title);
+        if (!same) {
+          var title = $("<h3></h3>");
+          if (asset.url) {
+            title.append(
+              $("<a></a>")
+                .attr({ href: asset.url, target: "_blank", rel: "noopener" })
+                .text(asset.title || "")
+            );
+          } else {
+            title.text(asset.title || "");
+          }
+          $ep.append(title);
         }
-        $ep.append(title);
-        var date = episode.published_at
-          ? episode.published_at.slice(0, 10)
-          : "";
+        var date = asset.published_at ? asset.published_at.slice(0, 10) : "";
         $ep.append(
           $('<div class="meta"></div>')
             .append(date ? $("<span></span>").text(date) : "")
-            .append($(badgeHtml(episode.match_types)))
+            .append($(badgeHtml(asset.match_types)))
         );
-        (episode.snippets || []).forEach(function (snippet) {
-          var clip = makeClip(show, episode, snippet);
+        (asset.passages || []).forEach(function (snippet) {
+          var clip = makeClip(group, asset, snippet);
           var $row = $('<div class="snippet-row"></div>');
           $row.append($('<p class="snippet"></p>').html(snippet.snippet_html));
           if (snippet.start_ms != null && snippet.start_ms !== "") {
@@ -358,7 +390,7 @@ $(function () {
               .attr({
                 "data-start": snippet.start_ms,
                 "data-audio": clip.audio_url,
-                "data-title": episode.episode_title,
+                "data-title": asset.title || group.title || "",
                 "data-href": clip.href,
               });
             $row.append($play);
@@ -367,7 +399,7 @@ $(function () {
             .attr({
               title: "Copy playable timestamp link",
               type: "button",
-              "data-episode": clip.episode_id || "",
+              "data-episode": clip.asset_id || "",
               "data-start": clip.start_ms,
               "data-href": clip.href,
             })
@@ -476,7 +508,7 @@ $(function () {
       .done(function (payload) {
         render(payload);
         renderBag();
-        if (payload.warnings && payload.warnings.length && payload.podcasts && payload.podcasts.length) {
+        if (payload.warnings && payload.warnings.length && payload.groups && payload.groups.length) {
           $status.append(" · " + payload.warnings.join(" "));
         }
       })

@@ -70,16 +70,30 @@ def youtube_listen_url(video_id: str, start_ms: Any) -> str:
     return f"https://www.youtube.com/watch?v={video_id}&t={seconds}s"
 
 
+def _stored(doc: dict[str, Any], key: str) -> Any:
+    if doc.get(key):
+        return doc[key]
+    attrs = doc.get("attrs") or {}
+    if attrs.get(key):
+        return attrs[key]
+    return None
+
+
 def primary_share_url(doc: dict[str, Any], start_ms: Any = None) -> str:
     """YouTube &t=Ns, then Spotify ?t=, then Apple ?t=, else empty for /listen."""
     ms = start_ms if start_ms is not None else doc.get("start_ms")
-    youtube_id = doc.get("youtube_video_id")
+    asset = doc.get("asset") or {}
+    youtube_id = _stored(doc, "youtube_video_id")
+    if not youtube_id and asset.get("type") == "video":
+        youtube_id = asset.get("id")
     if youtube_id:
-        return youtube_listen_url(youtube_id, ms)
-    spotify_id = doc.get("spotify_episode_id")
+        return youtube_listen_url(str(youtube_id), ms)
+    spotify_id = _stored(doc, "spotify_episode_id")
     if spotify_id:
-        return spotify_listen_url(spotify_id, ms)
-    apple_id = doc.get("apple_track_id")
+        return spotify_listen_url(str(spotify_id), ms)
+    apple_id = _stored(doc, "apple_track_id")
     if apple_id:
-        return apple_listen_url(apple_id, ms, doc.get("itunes_id") or APPLE_COLLECTION_ID)
+        return apple_listen_url(
+            apple_id, ms, _stored(doc, "itunes_id") or APPLE_COLLECTION_ID
+        )
     return ""

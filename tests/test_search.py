@@ -1,4 +1,4 @@
-from search_app.schema import coerce, snippet_document
+from search_app.schema import coerce, passage_document, passage_from_legacy
 from search_app.chunking import chunk_cues, chunk_transcript
 from search_app.srt import Cue, parse_srt_cues, srt_to_text
 from search_app.share import (
@@ -10,7 +10,7 @@ from search_app.share import (
 )
 from search_app.search import (
     FUZZY,
-    group_by_episode,
+    group_passages,
     highlight_html,
     lexical_pipeline,
     levenshtein,
@@ -25,33 +25,79 @@ def test_coerce_maps_legacy_podcast_fields():
         {
             "podcast_id": "mongodb-podcast",
             "podcast_title": "The MongoDB Podcast",
+            "podcast_author": "MongoDB",
             "episode_id": "abc",
             "episode_title": "Hello",
             "episode_url": "https://example.test",
+            "spotify_episode_id": "sp1",
             "text": "hi",
+            "chunk_index": 0,
         }
     )
-    assert doc["source_kind"] == "podcast"
-    assert doc["source_id"] == "mongodb-podcast"
-    assert doc["item_id"] == "abc"
-    assert doc["item_title"] == "Hello"
+    assert doc["schema_version"] == 3
+    assert doc["asset"] == {
+        "type": "episode",
+        "id": "abc",
+        "title": "Hello",
+        "url": "https://example.test",
+    }
+    assert doc["parent"]["type"] == "podcast"
+    assert doc["parent"]["id"] == "mongodb-podcast"
+    assert doc["parent"]["title"] == "The MongoDB Podcast"
+    assert doc["attrs"]["spotify_episode_id"] == "sp1"
+    assert "podcast_id" not in doc
+    assert "episode_id" not in doc
+    again = passage_from_legacy(doc)
+    assert again == doc
 
 
-def test_snippet_document_dual_writes_aliases():
-    doc = snippet_document(
-        source_kind="youtube",
-        source_id="mongodb-youtube",
-        source_title="MongoDB on YouTube",
-        source_author="MongoDB",
-        item_id="vid1",
-        item_title="Talk",
-        item_url="https://youtu.be/vid1",
+def test_passage_document_shapes():
+    video = passage_document(
+        asset_type="video",
+        asset_id="vid1",
+        title="Talk",
+        url="https://www.youtube.com/watch?v=vid1",
+        parent={
+            "type": "channel",
+            "id": "mongodb-youtube",
+            "title": "MongoDB on YouTube",
+            "author": "MongoDB",
+        },
         chunk_index=0,
         text="hello",
+        attrs={"youtube_video_id": "vid1"},
     )
-    assert doc["episode_id"] == "vid1"
-    assert doc["podcast_id"] == "mongodb-youtube"
-    assert doc["schema_version"] == 2
+    assert video["schema_version"] == 3
+    assert video["asset"]["type"] == "video"
+    assert video["parent"]["type"] == "channel"
+    assert "podcast_id" not in video
+    assert "episode_id" not in video
+
+    snippet = passage_document(
+        asset_type="snippet",
+        asset_id="snippet:8f3a",
+        title="Retry with jitter",
+        author="sig",
+        chunk_index=0,
+        text="def retry():\n    pass",
+        attrs={"language": "python"},
+    )
+    assert "parent" not in snippet
+    assert snippet["asset"]["author"] == "sig"
+    assert snippet["attrs"]["language"] == "python"
+
+    repo = passage_document(
+        asset_type="repo",
+        asset_id="mongodb/mongo",
+        title="mongodb/mongo",
+        url="https://github.com/mongodb/mongo",
+        author="mongodb",
+        chunk_index=0,
+        text="The MongoDB Database.",
+        attrs={"host": "github", "path": "README.md"},
+    )
+    assert "parent" not in repo
+    assert repo["asset"]["type"] == "repo"
 
 
 def test_spotify_and_apple_timestamp_urls():
@@ -88,8 +134,8 @@ def test_lexical_pipeline_uses_fuzzy_on_standard_multi_fields():
         for clause in clauses
         if clause["text"].get("fuzzy")
     }
-    assert "item_title.fuzzy" in fuzzy_paths
-    assert "episode_title.fuzzy" in fuzzy_paths
+    assert "asset.title.fuzzy" in fuzzy_paths
+    assert "parent.title.fuzzy" in fuzzy_paths
     assert "text.fuzzy" in fuzzy_paths
     assert FUZZY["maxEdits"] == 2
     assert FUZZY["prefixLength"] == 0
@@ -129,71 +175,77 @@ def test_rrf_prefers_docs_in_both_lists():
     assert set(ranked[0]["match_types"]) == {"keyword", "semantic"}
 
 
-def test_group_by_episode_keeps_podcast_order_and_caps_snippets():
+def _hit(asset, parent, chunk_index, score, match_types, html):
+    return {
+        "asset": asset,
+        "parent": parent,
+        "published_at": "2025-01-01",
+        "chunk_index": chunk_index,
+        "score": score,
+        "match_types": match_types,
+        "snippet_html": html,
+        "audio_url": "",
+        "attrs": {},
+    }
+
+
+def test_group_passages_nests_episodes_and_lifts_top_level_assets():
+    episode = {
+        "type": "episode",
+        "id": "e1",
+        "title": "Ep 1",
+        "url": "http://example.test/e1",
+    }
+    show = {"type": "podcast", "id": "p1", "title": "Show One", "author": "A"}
     docs = [
-        {
-            "podcast_id": "p1",
-            "podcast_title": "Show One",
-            "podcast_author": "A",
-            "episode_id": "e1",
-            "episode_title": "Ep 1",
-            "episode_url": "http://example.test/e1",
-            "published_at": "2025-01-01",
-            "chunk_index": 0,
-            "score": 0.9,
-            "match_types": ["keyword"],
-            "snippet_html": "one",
-        },
-        {
-            "podcast_id": "p1",
-            "podcast_title": "Show One",
-            "podcast_author": "A",
-            "episode_id": "e1",
-            "episode_title": "Ep 1",
-            "episode_url": "http://example.test/e1",
-            "published_at": "2025-01-01",
-            "chunk_index": 1,
-            "score": 0.4,
-            "match_types": ["semantic"],
-            "snippet_html": "two",
-        },
-        {
-            "podcast_id": "p1",
-            "podcast_title": "Show One",
-            "podcast_author": "A",
-            "episode_id": "e1",
-            "episode_title": "Ep 1",
-            "episode_url": "http://example.test/e1",
-            "published_at": "2025-01-01",
-            "chunk_index": 2,
-            "score": 0.2,
-            "match_types": ["semantic"],
-            "snippet_html": "three",
-        },
-        {
-            "podcast_id": "p2",
-            "podcast_title": "Show Two",
-            "podcast_author": "B",
-            "episode_id": "e2",
-            "episode_title": "Ep 2",
-            "episode_url": "http://example.test/e2",
-            "published_at": "2025-02-01",
-            "chunk_index": 0,
-            "score": 0.7,
-            "match_types": ["keyword"],
-            "snippet_html": "other",
-        },
+        _hit(episode, show, 0, 0.9, ["keyword"], "one"),
+        _hit(episode, show, 1, 0.4, ["semantic"], "two"),
+        _hit(episode, show, 2, 0.2, ["semantic"], "three"),
+        _hit(
+            {
+                "type": "episode",
+                "id": "e2",
+                "title": "Ep 2",
+                "url": "http://example.test/e2",
+            },
+            {"type": "podcast", "id": "p2", "title": "Show Two", "author": "B"},
+            0,
+            0.7,
+            ["keyword"],
+            "other",
+        ),
+        _hit(
+            {
+                "type": "repo",
+                "id": "mongodb/mongo",
+                "title": "mongodb/mongo",
+                "author": "mongodb",
+            },
+            None,
+            0,
+            0.5,
+            ["keyword"],
+            "readme",
+        ),
     ]
-    grouped = group_by_episode(docs, snippets_per_episode=2)
-    assert [show["podcast_id"] for show in grouped] == ["p1", "p2"]
-    assert len(grouped[0]["episodes"][0]["snippets"]) == 2
-    assert grouped[0]["episodes"][0]["match_types"] == ["keyword", "semantic"]
+    grouped = group_passages(docs, passages_per_asset=2)
+    assert [group["id"] for group in grouped] == ["p1", "p2", "mongodb/mongo"]
+    assert grouped[0]["type"] == "podcast"
+    assert len(grouped[0]["assets"][0]["passages"]) == 2
+    assert grouped[0]["assets"][0]["match_types"] == ["keyword", "semantic"]
+    repo = grouped[2]
+    assert repo["type"] == "repo"
+    assert repo["assets"][0]["type"] == "repo"
+    assert repo["assets"][0]["parent"] is None
 
 
 def test_snippets_are_uniquely_keyed():
-    keys = [(s["episode_id"], s["chunk_index"]) for s in SNIPPETS]
+    keys = [(s["asset"]["type"], s["asset"]["id"], s["chunk_index"]) for s in SNIPPETS]
     assert len(keys) == len(set(keys))
     assert all(s["text"].strip() for s in SNIPPETS)
+    assert all(s["asset"]["type"] == "episode" for s in SNIPPETS)
+    assert all(s["parent"]["type"] == "podcast" for s in SNIPPETS)
+    assert all("podcast_id" not in s and "episode_id" not in s for s in SNIPPETS)
 
 
 def test_srt_to_text_strips_indexes_and_timestamps():

@@ -6,6 +6,8 @@ so we store one document per passage instead of embedding a growing array.
 
 from datetime import datetime, timezone
 
+from .schema import passage_from_legacy
+
 UTC = timezone.utc
 
 
@@ -13,7 +15,7 @@ def _dt(year, month, day):
     return datetime(year, month, day, tzinfo=UTC)
 
 
-SNIPPETS = [
+_RAW = [
     # Security Now — TLS / certificates
     {
         "podcast_id": "security-now",
@@ -457,3 +459,5 @@ SNIPPETS = [
         ),
     },
 ]
+
+SNIPPETS = [passage_from_legacy(doc) for doc in _RAW]

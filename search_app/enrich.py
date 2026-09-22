@@ -93,7 +93,8 @@ def main() -> int:
     )
     try:
         coll = client[Config.MONGODB_DB][Config.MONGODB_COLLECTION]
-        episode_ids = coll.distinct("episode_id", {"podcast_id": "mongodb-podcast"})
+        show = {"asset.type": "episode", "parent.id": "mongodb-podcast"}
+        episode_ids = coll.distinct("asset.id", show)
         print(f"Mongo episodes {len(episode_ids)}")
         updated = 0
         missing_apple = []
@@ -106,26 +107,30 @@ def main() -> int:
                 title = rss_ep.title
                 spotify_id = spotify_episode_id_from_transcript_url(rss_ep.transcript_url)
             sample = coll.find_one(
-                {"episode_id": eid},
-                {"episode_title": 1, "itunes_id": 1, "episode_url": 1},
+                {"asset.type": "episode", "asset.id": eid},
+                {"asset.title": 1, "asset.url": 1, "attrs": 1},
             )
-            title = title or (sample or {}).get("episode_title")
+            asset = (sample or {}).get("asset") or {}
+            title = title or asset.get("title")
             apple_row = apple_by_title.get(_norm(title or ""))
             if not apple_row and title:
                 missing_apple.append((eid, title))
             else:
                 apple_id = (apple_row or {}).get("trackId")
             fields = {
-                "anchor_id": anchor_id_from_episode_url(
-                    (rss_ep.link if rss_ep else None)
-                    or (sample or {}).get("episode_url")
+                "attrs.anchor_id": anchor_id_from_episode_url(
+                    (rss_ep.link if rss_ep else None) or asset.get("url")
                 ),
+                "attrs.itunes_id": APPLE_COLLECTION_ID,
             }
             if spotify_id:
-                fields["spotify_episode_id"] = spotify_id
+                fields["attrs.spotify_episode_id"] = spotify_id
             if apple_id:
-                fields["apple_track_id"] = str(apple_id)
-            result = coll.update_many({"episode_id": eid}, {"$set": fields})
+                fields["attrs.apple_track_id"] = str(apple_id)
+            result = coll.update_many(
+                {"asset.type": "episode", "asset.id": eid},
+                {"$set": fields},
+            )
             updated += result.modified_count
 
         print(f"Need Apple search for {len(missing_apple)} titles")
@@ -137,8 +142,8 @@ def main() -> int:
                 row = None
             if row and row.get("trackId"):
                 coll.update_many(
-                    {"episode_id": eid},
-                    {"$set": {"apple_track_id": str(row["trackId"])}},
+                    {"asset.type": "episode", "asset.id": eid},
+                    {"$set": {"attrs.apple_track_id": str(row["trackId"])}},
                 )
                 print(f"  [{i}/{len(missing_apple)}] apple {row['trackId']} {title[:60]}")
             else:
@@ -146,12 +151,12 @@ def main() -> int:
             time.sleep(0.15)
 
         with_spotify = coll.distinct(
-            "episode_id",
-            {"podcast_id": "mongodb-podcast", "spotify_episode_id": {"$exists": True}},
+            "asset.id",
+            {**show, "attrs.spotify_episode_id": {"$exists": True}},
         )
         with_apple = coll.distinct(
-            "episode_id",
-            {"podcast_id": "mongodb-podcast", "apple_track_id": {"$exists": True}},
+            "asset.id",
+            {**show, "attrs.apple_track_id": {"$exists": True}},
         )
         print(
             f"Done. chunks touched ~{updated}. "

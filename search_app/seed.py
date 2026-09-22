@@ -16,6 +16,7 @@ from .indexes import (
     ensure_search_indexes,
     wait_for_indexes,
 )
+from .schema import passage_filter
 from .transcripts import SNIPPETS
 
 
@@ -40,11 +41,9 @@ def seed(uri: str | None = None) -> int:
         ensure_classic_indexes(collection)
 
         for snippet in SNIPPETS:
+            asset = snippet["asset"]
             collection.replace_one(
-                {
-                    "episode_id": snippet["episode_id"],
-                    "chunk_index": snippet["chunk_index"],
-                },
+                passage_filter(asset["type"], asset["id"], snippet["chunk_index"]),
                 snippet,
                 upsert=True,
             )

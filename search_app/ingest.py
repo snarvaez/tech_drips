@@ -18,11 +18,11 @@ from pymongo.server_api import ServerApi
 from .chunking import chunk_cues, chunk_transcript
 from .config import Config
 from .rss import FEED_URL, Episode, fetch_bytes, fetch_text, parse_feed
-from .schema import snippet_document
+from .schema import legacy_unset, passage_document, passage_filter
 from .srt import Cue, parse_srt_cues, srt_to_text, whisper_segments_to_cues
 
 APPLE_URL = "https://podcasts.apple.com/us/podcast/the-mongodb-podcast/id1500452446"
-PODCAST_ID = "mongodb-podcast"
+SHOW_ID = "mongodb-podcast"
 ITUNES_ID = "1500452446"
 CHUNK_CHARS = 900
 
@@ -77,38 +77,46 @@ def upsert_episode(
     ops = []
     now = datetime.now(timezone.utc)
     for index, chunk in enumerate(timed):
-        doc = snippet_document(
-            source_kind="podcast",
-            source_id=PODCAST_ID,
-            source_title=show_title,
-            source_author=author,
-            item_id=episode.guid,
-            item_title=episode.title,
-            item_url=episode.link or APPLE_URL,
+        doc = passage_document(
+            asset_type="episode",
+            asset_id=episode.guid,
+            title=episode.title,
+            url=episode.link or APPLE_URL,
+            parent={
+                "type": "podcast",
+                "id": SHOW_ID,
+                "title": show_title,
+                "author": author,
+                "url": APPLE_URL,
+            },
             chunk_index=index,
             text=chunk["text"],
-            itunes_id=ITUNES_ID,
-            audio_url=episode.audio_url or "",
+            audio_url=episode.audio_url or None,
             published_at=episode.published_at,
-            duration=episode.duration,
             start_ms=chunk.get("start_ms"),
             end_ms=chunk.get("end_ms"),
-            source=source,
+            attrs={
+                "itunes_id": ITUNES_ID,
+                "duration": episode.duration,
+                "spotify_episode_id": episode.spotify_episode_id,
+                "anchor_id": episode.anchor_id,
+            },
             ingest_source=source,
             ingested_at=now,
-            spotify_episode_id=episode.spotify_episode_id,
-            anchor_id=episode.anchor_id,
         )
         ops.append(
             UpdateOne(
-                {"episode_id": episode.guid, "chunk_index": index},
-                {"$set": doc},
+                passage_filter("episode", episode.guid, index),
+                {"$set": doc, "$unset": legacy_unset()},
                 upsert=True,
             )
         )
     collection.bulk_write(ops, ordered=False)
     collection.delete_many(
-        {"episode_id": episode.guid, "chunk_index": {"$gte": len(timed)}}
+        {
+            **passage_filter("episode", episode.guid),
+            "chunk_index": {"$gte": len(timed)},
+        }
     )
     return len(timed)
 
@@ -117,7 +125,10 @@ def has_timed_chunks(collection: Collection, episode_id: str) -> bool:
     def _count():
         return (
             collection.count_documents(
-                {"episode_id": episode_id, "start_ms": {"$gte": 0}},
+                {
+                    **passage_filter("episode", episode_id),
+                    "start_ms": {"$gte": 0},
+                },
                 limit=1,
             )
             > 0
@@ -312,8 +323,9 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(f"Whisper done ingested={w_in} skipped={w_skip} failed={w_fail}")
             failed += w_fail
-        total = collection.count_documents({"podcast_id": PODCAST_ID})
-        shows = collection.distinct("episode_id", {"podcast_id": PODCAST_ID})
+        show_filter = {"asset.type": "episode", "parent.id": SHOW_ID}
+        total = collection.count_documents(show_filter)
+        shows = collection.distinct("asset.id", show_filter)
         print(f"Atlas {Config.MONGODB_DB}.{collection.name}: {len(shows)} episodes, {total} chunks")
         return 1 if failed else 0
     finally:

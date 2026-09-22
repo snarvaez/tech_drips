@@ -10,7 +10,7 @@ import re
 from pymongo.collection import Collection
 from pymongo.errors import OperationFailure, PyMongoError
 
-from .schema import SNIPPET_PROJECT, coerce
+from .schema import PASSAGE_PROJECT, coerce
 
 LEXICAL_MAX_TIME_MS = 15_000
 VECTOR_MAX_TIME_MS = 20_000
@@ -24,7 +24,7 @@ FUZZY = {"maxEdits": 2, "prefixLength": 0, "maxExpansions": 50}
 
 
 def _hit_project(score_meta: str, *, highlights: bool = False) -> dict[str, Any]:
-    proj = dict(SNIPPET_PROJECT)
+    proj = dict(PASSAGE_PROJECT)
     proj["score"] = {"$meta": score_meta}
     if highlights:
         proj["highlights"] = {"$meta": "searchHighlights"}
@@ -37,21 +37,14 @@ def _title_should(query: str) -> list[dict[str, Any]]:
         {
             "text": {
                 "query": query,
-                "path": "item_title",
+                "path": "asset.title",
                 "score": {"boost": {"value": 2.0}},
             }
         },
         {
             "text": {
                 "query": query,
-                "path": "episode_title",
-                "score": {"boost": {"value": 2.0}},
-            }
-        },
-        {
-            "text": {
-                "query": query,
-                "path": "item_title.fuzzy",
+                "path": "asset.title.fuzzy",
                 "fuzzy": FUZZY,
                 "score": {"boost": {"value": 2.2}},
             }
@@ -59,16 +52,16 @@ def _title_should(query: str) -> list[dict[str, Any]]:
         {
             "text": {
                 "query": query,
-                "path": "episode_title.fuzzy",
-                "fuzzy": FUZZY,
-                "score": {"boost": {"value": 2.2}},
-            }
-        },
-        {
-            "text": {
-                "query": query,
-                "path": "source_title",
+                "path": "parent.title",
                 "score": {"boost": {"value": 1.3}},
+            }
+        },
+        {
+            "text": {
+                "query": query,
+                "path": "parent.title.fuzzy",
+                "fuzzy": FUZZY,
+                "score": {"boost": {"value": 1.1}},
             }
         },
         {
@@ -89,7 +82,7 @@ def lexical_pipeline(query: str, index: str, limit: int) -> list[dict[str, Any]]
                 "index": index,
                 "compound": {"should": _title_should(query)},
                 "highlight": {
-                    "path": ["text", "item_title", "episode_title"],
+                    "path": ["text", "asset.title", "parent.title"],
                     "maxNumPassages": 2,
                 },
             }
@@ -150,7 +143,7 @@ def rank_fusion_pipeline(
                                     "index": search_index,
                                     "compound": {"should": _title_should(query)},
                                     "highlight": {
-                                        "path": ["text", "item_title", "episode_title"],
+                                        "path": ["text", "asset.title", "parent.title"],
                                         "maxNumPassages": 2,
                                     },
                                 }
@@ -238,33 +231,33 @@ def _escape(value: str) -> str:
     )
 
 
+def _published(value: Any) -> str | None:
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
 def _serialize(doc: dict[str, Any]) -> dict[str, Any]:
     published = doc.get("published_at")
     doc = coerce(doc)
+    asset = doc.get("asset") or {}
     return {
         "id": str(doc.get("_id", "")),
-        "source_kind": doc.get("source_kind"),
-        "source_id": doc.get("source_id"),
-        "source_title": doc.get("source_title"),
-        "source_author": doc.get("source_author"),
-        "item_id": doc.get("item_id"),
-        "item_title": doc.get("item_title"),
-        "item_url": doc.get("item_url"),
-        "podcast_id": doc.get("podcast_id"),
-        "podcast_title": doc.get("podcast_title"),
-        "podcast_author": doc.get("podcast_author"),
-        "episode_id": doc.get("episode_id"),
-        "episode_title": doc.get("episode_title"),
-        "episode_url": doc.get("episode_url"),
+        "asset": {
+            "type": asset.get("type"),
+            "id": asset.get("id"),
+            "title": asset.get("title"),
+            "url": asset.get("url"),
+            "author": asset.get("author"),
+        },
+        "parent": doc.get("parent"),
         "audio_url": doc.get("audio_url") or "",
-        "spotify_episode_id": doc.get("spotify_episode_id"),
-        "apple_track_id": doc.get("apple_track_id"),
-        "itunes_id": doc.get("itunes_id"),
-        "youtube_video_id": doc.get("youtube_video_id"),
-        "media_kind": doc.get("source_kind") or doc.get("media_kind") or "podcast",
+        "attrs": doc.get("attrs") or {},
         "start_ms": doc.get("start_ms"),
         "end_ms": doc.get("end_ms"),
-        "published_at": published.isoformat() if published else None,
+        "published_at": _published(published),
         "chunk_index": doc.get("chunk_index"),
         "text": doc.get("text"),
         "score": float(doc.get("score") or 0),
@@ -273,38 +266,40 @@ def _serialize(doc: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def group_by_episode(
-    docs: list[dict[str, Any]], snippets_per_episode: int
+def group_passages(
+    docs: list[dict[str, Any]], passages_per_asset: int
 ) -> list[dict[str, Any]]:
-    episodes: dict[str, dict[str, Any]] = {}
-    order: list[str] = []
+    """Group chunks by asset, then by parent. Top-level assets are their own group."""
+    assets: dict[tuple[str, str], dict[str, Any]] = {}
+    order: list[tuple[str, str]] = []
     for doc in docs:
-        episode_id = doc.get("item_id") or doc.get("episode_id")
-        if episode_id not in episodes:
-            order.append(episode_id)
-            episodes[episode_id] = {
-                "podcast_id": doc["podcast_id"],
-                "podcast_title": doc["podcast_title"],
-                "podcast_author": doc["podcast_author"],
-                "episode_id": episode_id,
-                "episode_title": doc["episode_title"],
-                "episode_url": doc["episode_url"],
+        asset = doc.get("asset") or {}
+        asset_id = asset.get("id")
+        asset_type = asset.get("type") or "episode"
+        if not asset_id:
+            continue
+        key = (asset_type, asset_id)
+        if key not in assets:
+            order.append(key)
+            assets[key] = {
+                "type": asset_type,
+                "id": asset_id,
+                "title": asset.get("title"),
+                "url": asset.get("url"),
+                "author": asset.get("author"),
+                "parent": doc.get("parent"),
                 "audio_url": doc.get("audio_url") or "",
-                "spotify_episode_id": doc.get("spotify_episode_id"),
-                "apple_track_id": doc.get("apple_track_id"),
-                "itunes_id": doc.get("itunes_id"),
-                "youtube_video_id": doc.get("youtube_video_id"),
-                "media_kind": doc.get("media_kind") or "podcast",
-                "published_at": doc["published_at"],
+                "attrs": doc.get("attrs") or {},
+                "published_at": doc.get("published_at"),
                 "score": doc["score"],
                 "match_types": set(doc.get("match_types") or []),
-                "snippets": [],
+                "passages": [],
             }
-        bucket = episodes[episode_id]
+        bucket = assets[key]
         bucket["score"] = max(bucket["score"], doc["score"])
         bucket["match_types"].update(doc.get("match_types") or [])
-        if len(bucket["snippets"]) < snippets_per_episode:
-            bucket["snippets"].append(
+        if len(bucket["passages"]) < passages_per_asset:
+            bucket["passages"].append(
                 {
                     "chunk_index": doc["chunk_index"],
                     "snippet_html": doc["snippet_html"],
@@ -316,26 +311,38 @@ def group_by_episode(
                 }
             )
 
-    grouped_podcasts: dict[str, dict[str, Any]] = {}
-    podcast_order: list[str] = []
-    for episode_id in order:
-        episode = episodes[episode_id]
-        episode["match_types"] = sorted(episode["match_types"])
-        podcast_id = episode["podcast_id"]
-        if podcast_id not in grouped_podcasts:
-            podcast_order.append(podcast_id)
-            grouped_podcasts[podcast_id] = {
-                "podcast_id": podcast_id,
-                "podcast_title": episode["podcast_title"],
-                "podcast_author": episode["podcast_author"],
-                "score": episode["score"],
-                "episodes": [],
+    groups: dict[tuple[str, str], dict[str, Any]] = {}
+    group_order: list[tuple[str, str]] = []
+    for key in order:
+        asset = assets[key]
+        asset["match_types"] = sorted(asset["match_types"])
+        parent = asset.get("parent") or {}
+        if parent.get("id"):
+            gkey = (parent.get("type") or "podcast", parent["id"])
+            header = {
+                "type": parent.get("type"),
+                "id": parent["id"],
+                "title": parent.get("title"),
+                "author": parent.get("author"),
+                "url": parent.get("url"),
             }
-        show = grouped_podcasts[podcast_id]
-        show["score"] = max(show["score"], episode["score"])
-        show["episodes"].append(episode)
+        else:
+            gkey = (asset["type"], asset["id"])
+            header = {
+                "type": asset["type"],
+                "id": asset["id"],
+                "title": asset.get("title"),
+                "author": asset.get("author"),
+                "url": asset.get("url"),
+            }
+        if gkey not in groups:
+            group_order.append(gkey)
+            groups[gkey] = {**header, "score": asset["score"], "assets": []}
+        group = groups[gkey]
+        group["score"] = max(group["score"], asset["score"])
+        group["assets"].append(asset)
 
-    return [grouped_podcasts[pid] for pid in podcast_order]
+    return [groups[key] for key in group_order]
 
 
 def _annotate_match_types(
@@ -374,6 +381,42 @@ def levenshtein(a: str, b: str) -> int:
     return prev[-1]
 
 
+_FALLBACK_PROJECTION = {
+    "asset": 1,
+    "parent": 1,
+    "attrs": 1,
+    "audio_url": 1,
+    "start_ms": 1,
+    "end_ms": 1,
+    "published_at": 1,
+    "chunk_index": 1,
+    "text": 1,
+    "podcast_id": 1,
+    "podcast_title": 1,
+    "podcast_author": 1,
+    "episode_id": 1,
+    "episode_title": 1,
+    "episode_url": 1,
+    "source_kind": 1,
+    "source_id": 1,
+    "source_title": 1,
+    "source_author": 1,
+    "item_id": 1,
+    "item_title": 1,
+    "item_url": 1,
+    "media_kind": 1,
+    "youtube_video_id": 1,
+    "spotify_episode_id": 1,
+    "apple_track_id": 1,
+    "itunes_id": 1,
+}
+
+
+def _asset_title(doc: dict[str, Any]) -> str:
+    asset = doc.get("asset") or {}
+    return asset.get("title") or doc.get("episode_title") or doc.get("item_title") or ""
+
+
 def regex_fallback(
     collection: Collection, query: str, limit: int
 ) -> list[dict[str, Any]]:
@@ -383,32 +426,17 @@ def regex_fallback(
         collection.find(
             {
                 "$or": [
+                    {"asset.title": pattern},
+                    {"parent.title": pattern},
                     {"episode_title": pattern},
                     {"text": pattern},
                 ]
             },
-            {
-                "podcast_id": 1,
-                "podcast_title": 1,
-                "podcast_author": 1,
-                "episode_id": 1,
-                "episode_title": 1,
-                "episode_url": 1,
-                "audio_url": 1,
-                "spotify_episode_id": 1,
-                "apple_track_id": 1,
-                "itunes_id": 1,
-                "youtube_video_id": 1,
-                "media_kind": 1,
-                "start_ms": 1,
-                "end_ms": 1,
-                "published_at": 1,
-                "chunk_index": 1,
-                "text": 1,
-            },
+            _FALLBACK_PROJECTION,
         ).limit(limit)
     )
     for doc in docs:
+        doc.update(coerce(doc))
         doc["score"] = 1.0
         doc["match_types"] = ["keyword"]
         text = doc.get("text") or ""
@@ -428,39 +456,21 @@ def regex_fallback(
     if not (token.isalpha() and 4 <= len(token) <= 16):
         return []
     # Title-only, 1 edit: "gsming"→"gaming" without matching "giving".
-    scanned = collection.find(
-        {},
-        {
-            "podcast_id": 1,
-            "podcast_title": 1,
-            "podcast_author": 1,
-            "episode_id": 1,
-            "episode_title": 1,
-            "episode_url": 1,
-            "audio_url": 1,
-            "spotify_episode_id": 1,
-            "apple_track_id": 1,
-            "itunes_id": 1,
-            "start_ms": 1,
-            "end_ms": 1,
-            "published_at": 1,
-            "chunk_index": 1,
-            "text": 1,
-        },
-    )
+    scanned = collection.find({}, _FALLBACK_PROJECTION)
     fuzzy_docs: list[dict[str, Any]] = []
-    seen_episodes: set[str] = set()
+    seen_assets: set[str] = set()
     for doc in scanned:
-        title = (doc.get("episode_title") or "").lower()
+        title = _asset_title(doc).lower()
         words = re.findall(r"[a-z0-9']+", title)
         if any(
             abs(len(token) - len(w)) <= 1 and levenshtein(token, w) == 1
             for w in words
         ):
-            eid = doc.get("episode_id")
-            if eid in seen_episodes:
+            doc.update(coerce(doc))
+            eid = (doc.get("asset") or {}).get("id")
+            if eid in seen_assets:
                 continue
-            seen_episodes.add(eid)
+            seen_assets.add(eid)
             doc["score"] = 0.5
             doc["match_types"] = ["keyword"]
             doc["highlights"] = None
@@ -483,7 +493,7 @@ def search_topic(
 ) -> dict[str, Any]:
     query = (query or "").strip()
     if not query:
-        return {"query": query, "mode": None, "podcasts": [], "total_snippets": 0}
+        return {"query": query, "mode": None, "groups": [], "total_snippets": 0}
 
     lexical_docs: list[dict[str, Any]] = []
     vector_docs: list[dict[str, Any]] = []
@@ -553,11 +563,11 @@ def search_topic(
         if doc.get("snippet_html") and not (doc.get("highlights")):
             item["snippet_html"] = doc["snippet_html"]
         serialized.append(item)
-    podcasts = group_by_episode(serialized, snippets_per_episode)
+    groups = group_passages(serialized, snippets_per_episode)
     return {
         "query": query,
         "mode": mode,
-        "podcasts": podcasts,
+        "groups": groups,
         "total_snippets": len(serialized),
         "warnings": warnings,
     }

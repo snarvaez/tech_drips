@@ -11,35 +11,52 @@ Stack: **Flask**, **PyMongo**, **Jinja2 / HTML / jQuery**, **Gunicorn + Nginx**,
 
 Search is hybrid:
 
-- **Keyword:** Atlas Search on `text`, `episode_title`, and `podcast_title` (English analyzer, fuzzy, highlights).
+- **Keyword:** Atlas Search on `text`, `asset.title`, and `parent.title` (English analyzer, fuzzy, highlights).
 - **Semantic:** MongoDB Vector Search `autoEmbed` on `text` with the Voyage AI `voyage-4` model. Atlas generates embeddings at index time and again at query time, so the app never stores vectors or calls Voyage directly.
 
 ### Data model
 
-Episode transcripts are unbounded, so they are **not** stored as a growing array on a podcast document (that would blow past the 16MB BSON limit and wreck the working set). Each searchable passage is its own small document in `TechDrip.podcasts`, with podcast and episode fields denormalized so a search hit does not need `$lookup`.
+Episode transcripts are unbounded, so they are **not** stored as a growing array on a show document (that would blow past the 16MB BSON limit and wreck the working set). Each searchable passage is its own small document in `TechDrip.passages`. `asset` is the episode, video, repo, or snippet. `parent` is present only for an episode (podcast) or a video (channel). A repo or a code snippet has no parent. Show and channel titles are copied onto each passage so a search hit does not need `$lookup`.
 
 ```json
 {
-  "podcast_id": "security-now",
-  "podcast_title": "Security Now",
-  "podcast_author": "Steve Gibson",
-  "episode_id": "sn-1043",
-  "episode_title": "Double Extortion Hits Regional Hospitals",
-  "episode_url": "https://twit.tv/shows/security-now",
+  "schema_version": 3,
+  "asset": {
+    "type": "episode",
+    "id": "sn-1043",
+    "title": "Double Extortion Hits Regional Hospitals",
+    "url": "https://twit.tv/shows/security-now"
+  },
+  "parent": {
+    "type": "podcast",
+    "id": "security-now",
+    "title": "Security Now",
+    "author": "Steve Gibson"
+  },
   "published_at": { "$date": "2025-03-18T00:00:00Z" },
   "chunk_index": 0,
   "text": "Ransomware crews no longer just encrypt file servers..."
 }
 ```
 
+A YouTube video uses `asset.type: "video"` and `parent.type: "channel"`. A GitHub repo (`repo`) or a code snippet (`snippet`) omits `parent`. Platform ids (Spotify, Apple, YouTube) live under `attrs`.
+
 Indexes:
 
 | Name | Type | Purpose |
 |------|------|---------|
-| `podcast_search_index` | Atlas Search | Lexical search + highlighting + fuzzy multi-fields |
-| `podcast_vector_index` | Vector Search `autoEmbed` | Voyage `voyage-4` embeddings on `text` |
-| `episode_chunk` | Classic unique | Idempotent seeding |
-| `podcast_published` | Classic | Listing by show |
+| `passage_search_index` | Atlas Search | Lexical search + highlighting + fuzzy multi-fields |
+| `passage_vector_index` | Vector Search `autoEmbed` | Voyage `voyage-4` embeddings on `text` |
+| `asset_chunk` | Classic unique | `(asset.type, asset.id, chunk_index)` |
+| `asset_id` | Classic | Clip lookup by asset id |
+| `parent_published` | Classic | Listing by show or channel |
+| `asset_type_published` | Classic | Listing by asset type |
+
+Existing `podcasts` documents move to `passages` with:
+
+```bash
+python -m search_app.migrate_schema
+```
 
 ### Setup
 
@@ -65,7 +82,7 @@ Dev server:
 flask --app wsgi:app run --debug --port 5000
 ```
 
-Open http://127.0.0.1:5000 and search for topics such as `ransomware`, `CRISPR`, `sticky inflation`, or `passkeys`. Matching podcasts are grouped with the transcript passages that hit.
+Open http://127.0.0.1:5000 and search for topics such as `ransomware`, `CRISPR`, `sticky inflation`, or `passkeys`. Matches are grouped under their show, channel, or top-level asset.
 
 Health check: `GET /health`. Search API: `GET /api/search?q=ransomware`.
 

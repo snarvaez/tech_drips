@@ -11,9 +11,9 @@ from .srt import Cue
 
 CHANNEL_URL = "https://www.youtube.com/user/mongodb/videos"
 CHANNEL_ID = "UCK_m2976Yvbx-TyDLw7n1WA"
-PODCAST_ID = "mongodb-youtube"
-PODCAST_TITLE = "MongoDB on YouTube"
-PODCAST_AUTHOR = "MongoDB"
+CHANNEL_KEY = "mongodb-youtube"
+CHANNEL_TITLE = "MongoDB on YouTube"
+CHANNEL_AUTHOR = "MongoDB"
 
 
 @dataclass
