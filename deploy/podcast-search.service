@@ -1,0 +1,16 @@
+[Unit]
+Description=Podcast transcript search (Gunicorn)
+After=network.target
+
+[Service]
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/podcast-search
+EnvironmentFile=/var/www/podcast-search/.env
+ExecStart=/var/www/podcast-search/.venv/bin/gunicorn --config gunicorn.conf.py wsgi:app
+ExecReload=/bin/kill -s HUP $MAINPID
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

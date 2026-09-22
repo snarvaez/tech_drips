@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block body %}
+<aside id="bag-dock" class="bag-dock">
+  <button type="button" id="bag-toggle" class="bag-toggle" aria-expanded="false" aria-controls="bag-panel">
+    Clip bag <span id="bag-count" class="bag-count">0</span>
+  </button>
+  <div id="bag-panel" class="bag-panel" hidden>
+    <div class="bag-head">
+      <h2>Clip bag</h2>
+      <div class="bag-actions">
+        <button type="button" id="bag-copy" class="play-at">Copy all</button>
+        <button type="button" id="bag-clear" class="play-at">Clear</button>
+      </div>
+    </div>
+    <p class="bag-empty" id="bag-empty">Add snippets while you listen, then copy the bag for a champion.</p>
+    <ul id="bag-list" class="bag-list"></ul>
+  </div>
+</aside>
+
+<header class="mast">
+  <p class="kicker">Atlas Search · Voyage auto-embed</p>
+  <h1>Find the episode. Hear the passage.</h1>
+  <p class="lede">Search MongoDB Podcast and YouTube transcripts by topic. Keyword hits use Atlas Search; meaning uses Voyage AI auto-embeddings on each chunk. MongoDB <code>$rankFusion</code> blends the two. YouTube clips open at <code>&amp;t=</code> on youtube.com.</p>
+</header>
+
+<form id="search-form" class="search-form" action="/api/search" method="get" role="search">
+  <label class="sr-only" for="q">Search transcripts</label>
+  <input id="q" name="q" type="search" placeholder="Try ransomware, CRISPR, sticky inflation…" autocomplete="off" autofocus>
+  <button type="submit">Search</button>
+</form>
+
+<ul class="chips" id="sample-queries">
+  {% for sample in sample_queries %}
+  <li><button type="button" class="chip" data-query="{{ sample }}">{{ sample }}</button></li>
+  {% endfor %}
+</ul>
+
+<p class="status" id="status" hidden></p>
+<div id="results" class="results" aria-live="polite"></div>
+
+<div id="player" class="player" hidden>
+  <div class="player-meta">
+    <strong id="player-title"></strong>
+    <span id="player-time"></span>
+  </div>
+  <audio id="player-audio" controls preload="metadata"></audio>
+</div>
+{% endblock %}
