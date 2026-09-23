@@ -16,9 +16,14 @@ from typing import Any
 
 SCHEMA_VERSION = 3
 
-ASSET_TYPES = ("episode", "video", "post", "repo", "snippet")
-PARENT_TYPES = ("podcast", "channel", "blog")
-PARENT_OF = {"episode": "podcast", "video": "channel", "post": "blog"}
+ASSET_TYPES = ("episode", "video", "post", "file", "repo", "snippet")
+PARENT_TYPES = ("podcast", "channel", "blog", "repository")
+PARENT_OF = {
+    "episode": "podcast",
+    "video": "channel",
+    "post": "blog",
+    "file": "repository",
+}
 TOP_LEVEL = ("repo", "snippet")
 
 ATTR_KEYS = (
@@ -38,6 +43,7 @@ ATTR_KEYS = (
     "channel",
     "locale",
     "sitemap_lastmod",
+    "start_line",
 )
 
 LEGACY_FIELDS = (
@@ -76,6 +82,7 @@ PASSAGE_PROJECT = {
     "published_at": 1,
     "chunk_index": 1,
     "text": 1,
+    "code": 1,
 }
 
 
@@ -137,6 +144,7 @@ def passage_document(
     ingest_source: str | None = None,
     ingested_at: Any = None,
     ingest_complete: bool | None = None,
+    code: str | None = None,
 ) -> dict[str, Any]:
     if asset_type not in ASSET_TYPES:
         raise ValueError(f"Unknown asset type {asset_type!r}")
@@ -190,6 +198,8 @@ def passage_document(
         doc["ingested_at"] = ingested_at
     if ingest_complete is not None:
         doc["ingest_complete"] = bool(ingest_complete)
+    if _present(code):
+        doc["code"] = code
     return doc
 
 

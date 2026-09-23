@@ -1,11 +1,14 @@
 import json
+import os
 
 import pytest
 
 from search_app.schema import coerce, passage_document, passage_from_legacy
 from search_app.blog import article_from_html, parse_sitemap
 from search_app.blog_ingest import post_state
-from search_app.chunking import chunk_cues, chunk_sections, chunk_transcript
+from search_app.chunking import chunk_cues, chunk_sections, chunk_source, chunk_transcript
+from search_app.describe import describe_source, grounded_fallback
+from search_app.search import vector_pipeline as _vector_pipeline
 from search_app.srt import Cue, parse_srt_cues, srt_to_text
 from search_app.share import (
     apple_listen_url,
@@ -521,6 +524,127 @@ def test_html_article_fallback_when_next_data_is_absent():
     assert any("db.posts.find()" in chunk for chunk in chunks)
     assert ".x{color:red}" not in "\n".join(chunks)
     assert article_from_html("<html><p>no article</p></html>", POST_URL) is None
+
+
+def test_file_passage_links_to_the_source_line():
+    url = "https://github.com/mongodb-developer/typescript-multiplayer-gaming-example/blob/abc/backend/game.ts"
+    doc = passage_document(
+        asset_type="file",
+        asset_id="mongodb-developer/typescript-multiplayer-gaming-example:backend/game.ts",
+        title="game.ts",
+        url=url,
+        parent={
+            "type": "repository",
+            "id": "mongodb-developer/typescript-multiplayer-gaming-example",
+            "title": "Coin Race",
+            "url": "https://github.com/mongodb-developer/typescript-multiplayer-gaming-example",
+        },
+        chunk_index=0,
+        text="backend/game.ts defines collectCoin.",
+        code="export function collectCoin(player) {\n  return player.score + 1\n}",
+        attrs={"path": "backend/game.ts", "language": "typescript", "start_line": 12, "ref": "blob"},
+    )
+    assert doc["parent"]["type"] == "repository"
+    assert "code" in doc
+    href = passage_href({"type": "file", "id": doc["asset"]["id"], "url": url, "attrs": {}}, None)
+    payload = with_passage_hrefs(
+        {
+            "groups": [
+                {
+                    "assets": [
+                        {
+                            "type": "file",
+                            "id": doc["asset"]["id"],
+                            "url": url,
+                            "attrs": {},
+                            "passages": [{"start_line": 12, "start_ms": None}],
+                        }
+                    ]
+                }
+            ]
+        }
+    )
+    assert href == url
+    assert payload["groups"][0]["assets"][0]["passages"][0]["href"] == url + "#L12"
+    with pytest.raises(ValueError):
+        passage_document(
+            asset_type="file",
+            asset_id="x",
+            title="game.ts",
+            chunk_index=0,
+            text="missing parent",
+        )
+
+
+def test_source_chunks_keep_symbols_and_line_breaks():
+    source = "\n".join(
+        [
+            "import { db } from './db'",
+            "",
+            "export function collectCoin(player) {",
+            "  return player.score + 1",
+            "}",
+            "",
+            "export function updateZoneKeyRange(admin) {",
+            "  return admin.command({ updateZoneKeyRange: 'players' })",
+            "}",
+        ]
+    )
+    chunks = chunk_source(source, max_lines=80)
+    names = [chunk["symbol"] for chunk in chunks]
+    assert "collectCoin" in names
+    assert "updateZoneKeyRange" in names
+    zone = next(chunk for chunk in chunks if chunk["symbol"] == "updateZoneKeyRange")
+    assert "\n" in zone["code"]
+    assert zone["start_line"] > 1
+
+
+def test_grounded_description_does_not_invent_behavior():
+    source = "export function collectCoin(player) {\n  return player.score + 1\n}\n"
+    readme = "A two-player coin collecting game. MongoDB stores players and matches."
+    text = grounded_fallback(readme, "backend/game.ts", source)
+    assert "collectCoin" in text
+    assert "coin collecting" in text
+    assert "zone" not in text.lower()
+    assert "shard" not in text.lower()
+    saved = os.environ.pop("XAI_API_KEY", None)
+    try:
+        assert describe_source(readme, "backend/game.ts", source) == text
+    finally:
+        if saved is not None:
+            os.environ["XAI_API_KEY"] = saved
+
+
+def test_code_vector_pipeline_uses_voyage_code_4():
+    pipeline = _vector_pipeline(
+        "updateZoneKeyRange",
+        "passage_code_index",
+        "voyage-code-4",
+        5,
+        path="code",
+    )
+    stage = pipeline[0]["$vectorSearch"]
+    assert stage["path"] == "code"
+    assert stage["model"] == "voyage-code-4"
+    assert stage["index"] == "passage_code_index"
+
+
+def test_rrf_includes_a_code_hit_without_dropping_prose():
+    prose = [{"_id": "readme", "text": "multiplayer game", "score": 1, "match_types": ["keyword", "semantic"]}]
+    code = [{"_id": "zones", "text": "zones.ts updateZoneKeyRange", "code": "updateZoneKeyRange", "score": 1}]
+    ranked = reciprocal_rank_fusion(
+        prose,
+        [],
+        code=code,
+        lexical_weight=1.0,
+        code_weight=0.8,
+        preserve_lexical_types=True,
+    )
+    by_id = {doc["_id"]: doc for doc in ranked}
+    assert "readme" in by_id and "zones" in by_id
+    assert "keyword" in by_id["readme"]["match_types"]
+    assert "code" in by_id["zones"]["match_types"]
+    assert by_id["readme"]["score"] > by_id["zones"]["score"]
 
 
 def test_post_state_skips_a_current_contiguous_post():

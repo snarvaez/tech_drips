@@ -91,6 +91,8 @@ def api_search():
             model=current_app.config["EMBEDDING_MODEL"],
             limit=current_app.config["SEARCH_LIMIT"],
             snippets_per_episode=current_app.config["SNIPPETS_PER_EPISODE"],
+            code_index=current_app.config["CODE_VECTOR_INDEX"],
+            code_model=current_app.config["CODE_EMBEDDING_MODEL"],
         )
         return jsonify(with_passage_hrefs(payload, request.host_url))
     except Exception as exc:
