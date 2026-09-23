@@ -149,6 +149,14 @@ python -m search_app.blog_ingest
 
 Reads the English catalog at https://www.mongodb.com/sitemap-blog-pages.xml. Posts already stored at that sitemap `lastmod` are skipped. `--max-new` caps how many new posts to write; `--delay` defaults to 0.4 seconds between fetches.
 
+GitHub source (one repository at a time). Markdown stays on the `voyage-4` index. Source is embedded with `voyage-code-4` on the `code` field. A grounded paragraph on each source file is what a use-case query matches:
+
+```bash
+python -m search_app.code_ingest --repo typescript-multiplayer-gaming-example
+```
+
+Hits open the file on GitHub at the chunk's line. Set `XAI_API_KEY` to write those paragraphs with Grok; without it, the paragraph is the file path, identifiers that occur in the file, and the README's opening description.
+
 ### Tests that do not need Atlas
 
 ```bash

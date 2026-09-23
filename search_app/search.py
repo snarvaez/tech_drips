@@ -72,6 +72,20 @@ def _title_should(query: str) -> list[dict[str, Any]]:
                 "score": {"boost": {"value": 0.8}},
             }
         },
+        {
+            "text": {
+                "query": query,
+                "path": "code",
+                "score": {"boost": {"value": 1.0}},
+            }
+        },
+        {
+            "text": {
+                "query": query,
+                "path": "attrs.path",
+                "score": {"boost": {"value": 1.3}},
+            }
+        },
     ]
 
 
@@ -82,7 +96,7 @@ def lexical_pipeline(query: str, index: str, limit: int) -> list[dict[str, Any]]
                 "index": index,
                 "compound": {"should": _title_should(query)},
                 "highlight": {
-                    "path": ["text", "asset.title", "parent.title"],
+                    "path": ["text", "asset.title", "parent.title", "code"],
                     "maxNumPassages": 2,
                 },
             }
@@ -93,14 +107,14 @@ def lexical_pipeline(query: str, index: str, limit: int) -> list[dict[str, Any]]
 
 
 def vector_pipeline(
-    query: str, index: str, model: str, limit: int
+    query: str, index: str, model: str, limit: int, *, path: str = "text"
 ) -> list[dict[str, Any]]:
     num_candidates = min(max(limit * VECTOR_CANDIDATES_MULTIPLIER, 40), 10_000)
     return [
         {
             "$vectorSearch": {
                 "index": index,
-                "path": "text",
+                "path": path,
                 "query": {"text": query},
                 "model": model,
                 "numCandidates": num_candidates,
@@ -143,7 +157,7 @@ def rank_fusion_pipeline(
                                     "index": search_index,
                                     "compound": {"should": _title_should(query)},
                                     "highlight": {
-                                        "path": ["text", "asset.title", "parent.title"],
+                                        "path": ["text", "asset.title", "parent.title", "code"],
                                         "maxNumPassages": 2,
                                     },
                                 }
@@ -166,30 +180,35 @@ def reciprocal_rank_fusion(
     lexical: list[dict[str, Any]],
     vector: list[dict[str, Any]],
     *,
+    code: list[dict[str, Any]] | None = None,
     k: int = 60,
     lexical_weight: float = 1.0,
     vector_weight: float = 1.2,
+    code_weight: float = 0.8,
+    preserve_lexical_types: bool = False,
 ) -> list[dict[str, Any]]:
     """RRF merge when the cluster does not support $rankFusion (needs 8.0+)."""
     scores: dict[Any, float] = defaultdict(float)
     docs: dict[Any, dict[str, Any]] = {}
     sources: dict[Any, set[str]] = defaultdict(set)
 
-    for rank, doc in enumerate(lexical, start=1):
-        doc_id = doc["_id"]
-        scores[doc_id] += lexical_weight * (1.0 / (k + rank))
-        docs[doc_id] = doc
-        sources[doc_id].add("keyword")
+    def absorb(ranked: list[dict[str, Any]], weight: float, label: str, *, keep: bool) -> None:
+        for rank, doc in enumerate(ranked, start=1):
+            doc_id = doc["_id"]
+            scores[doc_id] += weight * (1.0 / (k + rank))
+            if doc_id in docs:
+                if not docs[doc_id].get("highlights") and doc.get("highlights"):
+                    docs[doc_id]["highlights"] = doc["highlights"]
+            else:
+                docs[doc_id] = doc
+            if keep and doc.get("match_types"):
+                sources[doc_id].update(doc["match_types"])
+            else:
+                sources[doc_id].add(label)
 
-    for rank, doc in enumerate(vector, start=1):
-        doc_id = doc["_id"]
-        scores[doc_id] += vector_weight * (1.0 / (k + rank))
-        if doc_id in docs:
-            if not docs[doc_id].get("highlights") and doc.get("highlights"):
-                docs[doc_id]["highlights"] = doc["highlights"]
-        else:
-            docs[doc_id] = doc
-        sources[doc_id].add("semantic")
+    absorb(lexical, lexical_weight, "keyword", keep=preserve_lexical_types)
+    absorb(vector, vector_weight, "semantic", keep=False)
+    absorb(code or [], code_weight, "code", keep=False)
 
     ranked = []
     for doc_id, score in sorted(scores.items(), key=lambda item: item[1], reverse=True):
@@ -262,7 +281,7 @@ def _serialize(doc: dict[str, Any]) -> dict[str, Any]:
         "text": doc.get("text"),
         "score": float(doc.get("score") or 0),
         "match_types": doc.get("match_types") or [],
-        "snippet_html": highlight_html(doc.get("highlights"), doc.get("text") or ""),
+        "snippet_html": highlight_html(doc.get("highlights"), _display_text(doc)),
     }
 
 
@@ -307,6 +326,7 @@ def group_passages(
                     "match_types": doc.get("match_types") or [],
                     "start_ms": doc.get("start_ms"),
                     "end_ms": doc.get("end_ms"),
+                    "start_line": (doc.get("attrs") or {}).get("start_line"),
                     "audio_url": doc.get("audio_url") or "",
                 }
             )
@@ -481,6 +501,14 @@ def regex_fallback(
     return fuzzy_docs
 
 
+def _display_text(doc: dict[str, Any]) -> str:
+    text = doc.get("text") or ""
+    code = doc.get("code") or ""
+    if code and len(text) < 180:
+        return code
+    return text
+
+
 def search_topic(
     collection: Collection,
     query: str,
@@ -490,6 +518,8 @@ def search_topic(
     model: str,
     limit: int,
     snippets_per_episode: int,
+    code_index: str | None = None,
+    code_model: str | None = None,
 ) -> dict[str, Any]:
     query = (query or "").strip()
     if not query:
@@ -556,6 +586,31 @@ def search_topic(
             mode = "semantic"
         else:
             mode = None
+
+    if code_index and code_model:
+        try:
+            code_docs = _run_aggregate(
+                collection,
+                vector_pipeline(query, code_index, code_model, limit, path="code"),
+                VECTOR_MAX_TIME_MS,
+            )
+        except (PyMongoError, OperationFailure) as exc:
+            code_docs = []
+            warnings.append(f"Code vector search unavailable: {exc}")
+        if code_docs:
+            if ranked:
+                ranked = reciprocal_rank_fusion(
+                    ranked,
+                    [],
+                    code=code_docs,
+                    lexical_weight=1.0,
+                    code_weight=0.8,
+                    preserve_lexical_types=True,
+                )
+            else:
+                ranked = reciprocal_rank_fusion([], [], code=code_docs)
+            mode = f"{mode}+code" if mode else "code"
+        ranked = ranked[:limit]
 
     serialized = []
     for doc in ranked:

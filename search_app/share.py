@@ -86,7 +86,7 @@ def primary_share_url(doc: dict[str, Any], start_ms: Any = None) -> str:
     """
     ms = start_ms if start_ms is not None else doc.get("start_ms")
     asset = doc.get("asset") or {}
-    if asset.get("type") == "post" and asset.get("url"):
+    if asset.get("type") in ("post", "file") and asset.get("url"):
         return str(asset["url"])
     youtube_id = _stored(doc, "youtube_video_id")
     if not youtube_id and asset.get("type") == "video":
@@ -126,7 +126,11 @@ def with_passage_hrefs(payload: dict[str, Any], listen_base: str = "") -> dict[s
     for group in payload.get("groups") or []:
         for asset in group.get("assets") or []:
             for passage in asset.get("passages") or []:
-                passage["href"] = passage_href(
+                href = passage_href(
                     asset, passage.get("start_ms"), listen_base=listen_base
                 )
+                line = passage.get("start_line")
+                if asset.get("type") == "file" and line and href.startswith("http") and "#L" not in href:
+                    href = href.split("#", 1)[0] + f"#L{int(line)}"
+                passage["href"] = href
     return payload

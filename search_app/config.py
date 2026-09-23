@@ -13,5 +13,7 @@ class Config:
     VECTOR_INDEX = os.environ.get("VECTOR_INDEX", "passage_vector_index")
     SEARCH_INDEX = os.environ.get("SEARCH_INDEX", "passage_search_index")
     EMBEDDING_MODEL = os.environ.get("EMBEDDING_MODEL", "voyage-4")
+    CODE_VECTOR_INDEX = os.environ.get("CODE_VECTOR_INDEX", "passage_code_index")
+    CODE_EMBEDDING_MODEL = os.environ.get("CODE_EMBEDDING_MODEL", "voyage-code-4")
     SEARCH_LIMIT = int(os.environ.get("SEARCH_LIMIT", "10"))
     SNIPPETS_PER_EPISODE = int(os.environ.get("SNIPPETS_PER_EPISODE", "3"))

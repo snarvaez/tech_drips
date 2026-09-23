@@ -126,3 +126,75 @@ def chunk_transcript(text: str, max_chars: int = 900) -> list[str]:
     if current:
         chunks.append(current)
     return chunks
+
+
+_SYMBOL = re.compile(
+    r"^(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function|class|interface|def|func|fn)\s+([A-Za-z_][A-Za-z0-9_]*)"
+    r"|^(?:export\s+)?(?:const|let|var)\s+([A-Za-z_][A-Za-z0-9_]*)\s*="
+)
+
+
+def chunk_source(
+    source: str,
+    *,
+    max_lines: int = 80,
+    overlap: int = 10,
+    max_chars: int = 3500,
+) -> list[dict]:
+    """Split source on top-level symbols, then on line windows.
+
+    Each item is ``{"code", "start_line", "symbol"}``. ``start_line`` is 1-based.
+    Line breaks are kept. The sentence splitter is not used.
+    """
+    lines = (source or "").splitlines()
+    if not any(line.strip() for line in lines):
+        return []
+    symbols = []
+    for index, line in enumerate(lines):
+        match = _SYMBOL.match(line.strip())
+        if match:
+            symbols.append((index, match.group(1) or match.group(2)))
+    if len(symbols) < 2:
+        return _window_lines(lines, None, 1, max_lines, overlap, max_chars)
+    chunks: list[dict] = []
+    first = symbols[0][0]
+    if first > 0:
+        chunks.extend(_window_lines(lines[:first], None, 1, max_lines, overlap, max_chars))
+    for index, (start, name) in enumerate(symbols):
+        end = symbols[index + 1][0] if index + 1 < len(symbols) else len(lines)
+        chunks.extend(
+            _window_lines(lines[start:end], name, start + 1, max_lines, overlap, max_chars)
+        )
+    return chunks
+
+
+def _window_lines(
+    lines: list[str],
+    symbol: str | None,
+    start_line: int,
+    max_lines: int,
+    overlap: int,
+    max_chars: int,
+) -> list[dict]:
+    chunks: list[dict] = []
+    step = max(1, max_lines - overlap)
+    offset = 0
+    while offset < len(lines):
+        piece = lines[offset : offset + max_lines]
+        while piece and len("\n".join(piece)) > max_chars:
+            piece = piece[:-1]
+        if not piece:
+            piece = [lines[offset][:max_chars]]
+        code = "\n".join(piece).strip("\n")
+        if code.strip():
+            chunks.append(
+                {
+                    "code": code,
+                    "start_line": start_line + offset,
+                    "symbol": symbol,
+                }
+            )
+        if offset + len(piece) >= len(lines):
+            break
+        offset += step
+    return chunks

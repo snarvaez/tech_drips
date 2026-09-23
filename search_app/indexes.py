@@ -13,8 +13,10 @@ from pymongo.collection import Collection
 from pymongo.operations import SearchIndexModel
 
 VECTOR_INDEX_NAME = "passage_vector_index"
+CODE_VECTOR_INDEX_NAME = "passage_code_index"
 SEARCH_INDEX_NAME = "passage_search_index"
 EMBEDDING_MODEL = "voyage-4"
+CODE_EMBEDDING_MODEL = "voyage-code-4"
 
 LEGACY_INDEXES = (
     "episode_chunk",
@@ -34,7 +36,7 @@ SNIPPET_VALIDATOR: dict[str, Any] = {
                 "bsonType": "object",
                 "required": ["type", "id", "title"],
                 "properties": {
-                    "type": {"enum": ["episode", "video", "post", "repo", "snippet"]},
+                    "type": {"enum": ["episode", "video", "post", "file", "repo", "snippet"]},
                     "id": {"bsonType": "string", "minLength": 1},
                     "title": {"bsonType": "string", "minLength": 1},
                     "url": {"bsonType": "string"},
@@ -45,7 +47,7 @@ SNIPPET_VALIDATOR: dict[str, Any] = {
                 "bsonType": "object",
                 "required": ["type", "id", "title"],
                 "properties": {
-                    "type": {"enum": ["podcast", "channel", "blog"]},
+                    "type": {"enum": ["podcast", "channel", "blog", "repository"]},
                     "id": {"bsonType": "string", "minLength": 1},
                     "title": {"bsonType": "string", "minLength": 1},
                     "author": {"bsonType": "string"},
@@ -67,6 +69,12 @@ SNIPPET_VALIDATOR: dict[str, Any] = {
                 "maxLength": 8000,
                 "description": "Bounded passage for search and Voyage auto-embed.",
             },
+            "code": {
+                "bsonType": "string",
+                "minLength": 1,
+                "maxLength": 8000,
+                "description": "Source chunk embedded with voyage-code-4, not voyage-4.",
+            },
         },
     }
 }
@@ -84,6 +92,22 @@ VECTOR_INDEX_DEFINITION: dict[str, Any] = {
         {"type": "filter", "path": "parent.id"},
     ]
 }
+
+# Source stays off the voyage-4 index. A missing `code` field is not embedded.
+CODE_VECTOR_INDEX_DEFINITION: dict[str, Any] = {
+    "fields": [
+        {
+            "type": "autoEmbed",
+            "path": "code",
+            "model": CODE_EMBEDDING_MODEL,
+            "modality": "text",
+        },
+        {"type": "filter", "path": "asset.type"},
+        {"type": "filter", "path": "asset.id"},
+        {"type": "filter", "path": "parent.id"},
+    ]
+}
+
 
 def _string_with_fuzzy(analyzer: str = "lucene.english") -> dict[str, Any]:
     # lucene.english stems ("gaming" → "game"), which blocks typos like
@@ -122,6 +146,14 @@ SEARCH_INDEX_DEFINITION: dict[str, Any] = {
                     "title": _string_with_fuzzy(),
                     "type": {"type": "token"},
                     "id": {"type": "token"},
+                },
+            },
+            # lucene.standard keeps updateZoneKeyRange as one token.
+            "code": {"type": "string", "analyzer": "lucene.standard"},
+            "attrs": {
+                "type": "document",
+                "fields": {
+                    "path": {"type": "string", "analyzer": "lucene.standard"},
                 },
             },
         },
@@ -205,6 +237,11 @@ def ensure_search_indexes(
             name=search_name,
             type="search",
         ),
+        CODE_VECTOR_INDEX_NAME: SearchIndexModel(
+            definition=CODE_VECTOR_INDEX_DEFINITION,
+            name=CODE_VECTOR_INDEX_NAME,
+            type="vectorSearch",
+        ),
     }
     last_error: Exception | None = None
     for attempt in range(1, attempts + 1):
@@ -217,6 +254,10 @@ def ensure_search_indexes(
                 collection.update_search_index(search_name, SEARCH_INDEX_DEFINITION)
             if vector_name in existing:
                 collection.update_search_index(vector_name, VECTOR_INDEX_DEFINITION)
+            if CODE_VECTOR_INDEX_NAME in existing:
+                collection.update_search_index(
+                    CODE_VECTOR_INDEX_NAME, CODE_VECTOR_INDEX_DEFINITION
+                )
             return
         except Exception as exc:
             last_error = exc
