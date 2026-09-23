@@ -1,9 +1,9 @@
-"""Passage schema for shows, channels, repos, and snippets.
+"""Passage schema for shows, channels, blogs, repos, and snippets.
 
 One collection, ``passages``. Each document is a bounded searchable chunk
-(``text``) of an asset. ``asset`` is the episode, video, repo, or snippet.
-``parent`` is set only when that asset sits inside a container (a podcast or
-a channel). ``text`` stays the Voyage auto-embed path.
+(``text``) of an asset. ``asset`` is the episode, video, post, repo, or
+snippet. ``parent`` is set only when that asset sits inside a container (a
+podcast, a channel, or a blog). ``text`` stays the Voyage auto-embed path.
 
 Schema version 3 does not write ``podcast_*``, ``episode_*``, ``source_*``,
 or ``item_*``. ``passage_from_legacy`` still reads those names so existing
@@ -16,9 +16,9 @@ from typing import Any
 
 SCHEMA_VERSION = 3
 
-ASSET_TYPES = ("episode", "video", "repo", "snippet")
-PARENT_TYPES = ("podcast", "channel")
-PARENT_OF = {"episode": "podcast", "video": "channel"}
+ASSET_TYPES = ("episode", "video", "post", "repo", "snippet")
+PARENT_TYPES = ("podcast", "channel", "blog")
+PARENT_OF = {"episode": "podcast", "video": "channel", "post": "blog"}
 TOP_LEVEL = ("repo", "snippet")
 
 ATTR_KEYS = (
@@ -34,6 +34,10 @@ ATTR_KEYS = (
     "path",
     "ref",
     "language",
+    "slug",
+    "channel",
+    "locale",
+    "sitemap_lastmod",
 )
 
 LEGACY_FIELDS = (
