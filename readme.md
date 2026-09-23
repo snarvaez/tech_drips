@@ -39,7 +39,7 @@ Episode transcripts are unbounded, so they are **not** stored as a growing array
 }
 ```
 
-A YouTube video uses `asset.type: "video"` and `parent.type: "channel"`. A GitHub repo (`repo`) or a code snippet (`snippet`) omits `parent`. Platform ids (Spotify, Apple, YouTube) live under `attrs`.
+A YouTube video uses `asset.type: "video"` and `parent.type: "channel"`. A blog post uses `asset.type: "post"` and `parent.type: "blog"`. A GitHub repo (`repo`) or a code snippet (`snippet`) omits `parent`. Platform ids (Spotify, Apple, YouTube) and blog slug, channel, and sitemap date live under `attrs`.
 
 Indexes:
 
@@ -140,6 +140,14 @@ python -m search_app.youtube_loop --max-new 40 --delay 8 --batch-pause 600
 ```
 
 Ctrl+C stops the loop. Already-ingested videos are skipped.
+
+MongoDB Blog (same passage collection, chunk size, and hybrid ranker). Hits open the article:
+
+```bash
+python -m search_app.blog_ingest
+```
+
+Reads the English catalog at https://www.mongodb.com/sitemap-blog-pages.xml. Posts already stored at that sitemap `lastmod` are skipped. `--max-new` caps how many new posts to write; `--delay` defaults to 0.4 seconds between fetches.
 
 ### Tests that do not need Atlas
 

@@ -34,7 +34,7 @@ SNIPPET_VALIDATOR: dict[str, Any] = {
                 "bsonType": "object",
                 "required": ["type", "id", "title"],
                 "properties": {
-                    "type": {"enum": ["episode", "video", "repo", "snippet"]},
+                    "type": {"enum": ["episode", "video", "post", "repo", "snippet"]},
                     "id": {"bsonType": "string", "minLength": 1},
                     "title": {"bsonType": "string", "minLength": 1},
                     "url": {"bsonType": "string"},
@@ -45,7 +45,7 @@ SNIPPET_VALIDATOR: dict[str, Any] = {
                 "bsonType": "object",
                 "required": ["type", "id", "title"],
                 "properties": {
-                    "type": {"enum": ["podcast", "channel"]},
+                    "type": {"enum": ["podcast", "channel", "blog"]},
                     "id": {"bsonType": "string", "minLength": 1},
                     "title": {"bsonType": "string", "minLength": 1},
                     "author": {"bsonType": "string"},

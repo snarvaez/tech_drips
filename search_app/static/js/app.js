@@ -69,6 +69,10 @@ $(function () {
     var sec = shareSeconds(startMs);
     var attrs = attrsOf(asset);
     var page = (asset && (asset.url || asset.asset_url || asset.episode_url)) || "";
+    var type = (asset && (asset.type || asset.asset_type)) || "";
+    if (type === "post" && page) {
+      return page;
+    }
     var yt =
       attrs.youtube_video_id ||
       (asset && asset.youtube_video_id) ||

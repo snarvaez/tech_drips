@@ -1,5 +1,11 @@
+import json
+
+import pytest
+
 from search_app.schema import coerce, passage_document, passage_from_legacy
-from search_app.chunking import chunk_cues, chunk_transcript
+from search_app.blog import article_from_html, parse_sitemap
+from search_app.blog_ingest import post_state
+from search_app.chunking import chunk_cues, chunk_sections, chunk_transcript
 from search_app.srt import Cue, parse_srt_cues, srt_to_text
 from search_app.share import (
     apple_listen_url,
@@ -333,3 +339,197 @@ def test_highlight_wraps_hits():
         "hello world",
     )
     assert html == "hello <mark>world</mark>"
+
+
+POST_URL = "https://www.mongodb.com/company/blog/technical/prisma-next"
+
+
+def test_passage_document_accepts_a_blog_post():
+    doc = passage_document(
+        asset_type="post",
+        asset_id="bltabc",
+        title="Prisma Next",
+        url=POST_URL,
+        author="Alex Bevilacqua, Will Madden",
+        parent={
+            "type": "blog",
+            "id": "mongodb-blog",
+            "title": "MongoDB Blog",
+            "author": "MongoDB",
+            "url": "https://www.mongodb.com/company/blog",
+        },
+        chunk_index=0,
+        text="You fetch your first document.",
+        attrs={"slug": "/company/blog/technical/prisma-next", "channel": "technical"},
+    )
+    assert doc["asset"]["type"] == "post"
+    assert doc["parent"]["type"] == "blog"
+    assert doc["parent"]["id"] == "mongodb-blog"
+    assert "start_ms" not in doc
+    with pytest.raises(ValueError):
+        passage_document(
+            asset_type="post",
+            asset_id="bltabc",
+            title="Prisma Next",
+            chunk_index=0,
+            text="missing parent",
+        )
+
+
+def test_passage_href_for_a_post_opens_the_article():
+    href = passage_href(
+        {"type": "post", "id": "bltabc", "url": POST_URL, "attrs": {}},
+        None,
+        listen_base="http://127.0.0.1:5000",
+    )
+    assert href == POST_URL
+    assert "/listen" not in href
+
+
+def test_sitemap_keeps_english_blog_posts_only():
+    xml = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://www.mongodb.com/company/blog/technical/prisma-next</loc><lastmod>2026-06-03</lastmod></url>
+  <url><loc>https://www.mongodb.com/company/research/how-to-test</loc><lastmod>2026-09-23</lastmod></url>
+  <url><loc>https://www.mongodb.com/company/bloghow-to-select-for-update-inside-mongodb-transactions</loc></url>
+  <url><loc>https://www.mongodb.com/company/blog/channel/home</loc></url>
+  <url><loc>https://www.mongodb.com/company/blog/innovating-with-mongodb-customer-successes-may-2025/</loc><lastmod>2026-08-04</lastmod></url>
+</urlset>
+"""
+    entries = parse_sitemap(xml)
+    assert [entry.url for entry in entries] == [
+        "https://www.mongodb.com/company/blog/technical/prisma-next",
+        "https://www.mongodb.com/company/blog/innovating-with-mongodb-customer-successes-may-2025/",
+    ]
+    assert entries[0].lastmod == "2026-06-03"
+
+
+def test_rich_text_sections_keep_headings_and_code():
+    sentence = "Atlas keeps the order in the same document. "
+    page = {
+        "_content_type_uid": "blog_article",
+        "uid": "bltabc",
+        "title": "Prisma Next",
+        "url": "/company/blog/technical/prisma-next",
+        "locale": "en-us",
+        "entry_settings": {"published_date": "2026-05-20"},
+        "contributors": [{"title": "Alex Bevilacqua"}, {"title": "Will Madden"}],
+        "entry_content": [
+            {"side_bar": {}},
+            {
+                "rich_text": {
+                    "json_rich_text": {
+                        "type": "doc",
+                        "children": [
+                            {"type": "p", "children": [{"text": "Intro paragraph."}]},
+                            {
+                                "type": "h2",
+                                "children": [{"text": "You fetch your first document"}],
+                            },
+                            {"type": "p", "children": [{"text": sentence * 40}]},
+                            {
+                                "type": "reference",
+                                "attrs": {
+                                    "content-type-uid": "code_panel",
+                                    "entry-uid": "bltcode",
+                                },
+                            },
+                            {
+                                "type": "reference",
+                                "attrs": {
+                                    "content-type-uid": "media",
+                                    "entry-uid": "bltmedia",
+                                },
+                            },
+                        ],
+                    }
+                }
+            },
+        ],
+        "_embedded_items": {
+            "entry_content.rich_text.json_rich_text": [
+                {
+                    "uid": "bltcode",
+                    "_content_type_uid": "code_panel",
+                    "entry_content": {
+                        "code_snippets": [
+                            {
+                                "language": "TypeScript",
+                                "code": "const user = await db.collection('users').findOne({ email });",
+                            }
+                        ]
+                    },
+                },
+                {
+                    "uid": "bltmedia",
+                    "_content_type_uid": "media",
+                    "entry_content": {"caption": "ignored figure"},
+                },
+            ]
+        },
+    }
+    html = (
+        '<html><script id="__NEXT_DATA__" type="application/json">'
+        + json.dumps({"props": {"pageProps": {"page": page}}})
+        + "</script></html>"
+    )
+    article = article_from_html(html, POST_URL)
+    assert article is not None
+    assert article.uid == "bltabc"
+    assert article.author == "Alex Bevilacqua, Will Madden"
+    assert article.channel == "technical"
+    assert article.slug == "/company/blog/technical/prisma-next"
+    chunks = chunk_sections(article.sections, max_chars=900)
+    headed = [chunk for chunk in chunks if chunk.startswith("You fetch your first document")]
+    assert len(headed) >= 2
+    code = [chunk for chunk in chunks if "findOne" in chunk]
+    assert code
+    assert "TypeScript\nconst user" in code[0]
+    assert "ignored figure" not in "\n".join(chunks)
+    assert article_from_html(
+        '<html><script id="__NEXT_DATA__" type="application/json">'
+        + json.dumps({"props": {"pageProps": {"page": {"_content_type_uid": "page"}}}})
+        + "</script></html>",
+        POST_URL,
+    ) is None
+
+
+def test_html_article_fallback_when_next_data_is_absent():
+    html = """
+    <html><head>
+    <title>Voyage | MongoDB</title>
+    <script type="application/ld+json">
+    {"@context":"https://schema.org","@graph":[{"@type":"Article","headline":"Voyage","datePublished":"2025-02-01","author":{"@type":"Person","name":"Ada"}}]}
+    </script>
+    </head><body>
+    <article>
+      <style>.x{color:red}</style>
+      <h2>Why this matters</h2>
+      <p>MongoDB acquired Voyage AI.</p>
+      <pre>db.posts.find()</pre>
+    </article>
+    </body></html>
+    """
+    article = article_from_html(html, "https://www.mongodb.com/company/blog/news/voyage")
+    assert article is not None
+    assert article.uid == "/company/blog/news/voyage"
+    assert article.title == "Voyage"
+    assert article.author == "Ada"
+    assert article.channel == "news"
+    chunks = chunk_sections(article.sections, max_chars=900)
+    assert chunks[0].startswith("Why this matters")
+    assert any("db.posts.find()" in chunk for chunk in chunks)
+    assert ".x{color:red}" not in "\n".join(chunks)
+    assert article_from_html("<html><p>no article</p></html>", POST_URL) is None
+
+
+def test_post_state_skips_a_current_contiguous_post():
+    bucket = {
+        "indexes": [0, 1],
+        "lastmods": {"2026-06-03"},
+        "complete": [True, True],
+    }
+    assert post_state(bucket, "2026-06-03", force=False) == "complete"
+    assert post_state(bucket, "2026-06-04", force=False) == "stale"
+    assert post_state({"indexes": [0, 2], "lastmods": {"2026-06-03"}, "complete": [True, True]}, "2026-06-03", force=False) == "partial"
+    assert post_state(None, "2026-06-03", force=False) == "missing"

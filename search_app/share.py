@@ -80,9 +80,14 @@ def _stored(doc: dict[str, Any], key: str) -> Any:
 
 
 def primary_share_url(doc: dict[str, Any], start_ms: Any = None) -> str:
-    """YouTube &t=Ns, then Spotify ?t=, then Apple ?t=, else empty for /listen."""
+    """Article URL, else YouTube &t=Ns, then Spotify ?t=, then Apple ?t=.
+
+    Empty means the caller should fall back to /listen.
+    """
     ms = start_ms if start_ms is not None else doc.get("start_ms")
     asset = doc.get("asset") or {}
+    if asset.get("type") == "post" and asset.get("url"):
+        return str(asset["url"])
     youtube_id = _stored(doc, "youtube_video_id")
     if not youtube_id and asset.get("type") == "video":
         youtube_id = asset.get("id")
