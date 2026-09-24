@@ -157,6 +157,14 @@ python -m search_app.code_ingest --repo typescript-multiplayer-gaming-example
 
 Hits open the file on GitHub at the chunk's line. Set `XAI_API_KEY` to write those paragraphs with Grok; without it, the paragraph is the file path, identifiers that occur in the file, and the README's opening description.
 
+MongoDB Docs (current English books only; old versioned manuals are skipped). Each page is fetched as Markdown. Prose uses `voyage-4`. Fenced examples use `voyage-code-4`. Hits open the docs page at the section heading:
+
+```bash
+python -m search_app.docs_ingest --product manual
+```
+
+The default `--product manual` is the Database Manual, about 2,200 pages. `--product ''` walks every current book.
+
 ### Tests that do not need Atlas
 
 ```bash

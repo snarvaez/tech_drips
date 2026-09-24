@@ -70,7 +70,7 @@ $(function () {
     var attrs = attrsOf(asset);
     var page = (asset && (asset.url || asset.asset_url || asset.episode_url)) || "";
     var type = (asset && (asset.type || asset.asset_type)) || "";
-    if ((type === "post" || type === "file") && page) {
+    if ((type === "post" || type === "file" || type === "doc") && page) {
       return page;
     }
     var yt =

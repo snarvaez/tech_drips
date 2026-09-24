@@ -16,13 +16,14 @@ from typing import Any
 
 SCHEMA_VERSION = 3
 
-ASSET_TYPES = ("episode", "video", "post", "file", "repo", "snippet")
-PARENT_TYPES = ("podcast", "channel", "blog", "repository")
+ASSET_TYPES = ("episode", "video", "post", "file", "doc", "repo", "snippet")
+PARENT_TYPES = ("podcast", "channel", "blog", "repository", "manual")
 PARENT_OF = {
     "episode": "podcast",
     "video": "channel",
     "post": "blog",
     "file": "repository",
+    "doc": "manual",
 }
 TOP_LEVEL = ("repo", "snippet")
 
@@ -44,6 +45,9 @@ ATTR_KEYS = (
     "locale",
     "sitemap_lastmod",
     "start_line",
+    "product",
+    "heading",
+    "anchor",
 )
 
 LEGACY_FIELDS = (
