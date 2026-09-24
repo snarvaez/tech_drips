@@ -5,6 +5,13 @@ import pytest
 
 from search_app.schema import coerce, passage_document, passage_from_legacy
 from search_app.blog import article_from_html, parse_sitemap
+from search_app.docs import (
+    heading_anchor,
+    is_current_docs_url,
+    parse_page_sitemap,
+    passages_from_markdown,
+    product_id,
+)
 from search_app.blog_ingest import post_state
 from search_app.chunking import chunk_cues, chunk_sections, chunk_source, chunk_transcript
 from search_app.describe import describe_source, grounded_fallback
@@ -645,6 +652,110 @@ def test_rrf_includes_a_code_hit_without_dropping_prose():
     assert "keyword" in by_id["readme"]["match_types"]
     assert "code" in by_id["zones"]["match_types"]
     assert by_id["readme"]["score"] > by_id["zones"]["score"]
+
+
+SAMPLE_DOC = """
+> For the complete MongoDB documentation index, see www.mongodb.com/docs/llms.txt
+
+# Text Indexes on Self-Managed Deployments
+
+Text indexes support queries on string fields.
+
+## Use Cases
+
+An online shop's clothing collection has a description field. To find clothes made of silk, create a text index and run a $text query.
+
+```javascript
+db.collection.createIndex(
+   { description: "text" }
+)
+```
+"""
+
+
+def test_docs_markdown_splits_prose_and_fenced_code():
+    title, passages = passages_from_markdown(SAMPLE_DOC)
+    assert title == "Text Indexes on Self-Managed Deployments"
+    prose = [item for item in passages if not item["code"]]
+    code = [item for item in passages if item["code"]]
+    assert any("silk" in item["text"] for item in prose)
+    assert code and "createIndex" in code[0]["code"]
+    assert "\n" in code[0]["code"]
+    assert code[0]["language"] == "javascript"
+    assert code[0]["text"].startswith("Use Cases")
+    assert code[0]["anchor"] == "use-cases"
+    assert "createIndex" not in " ".join(item["text"] for item in prose if "silk" in item["text"] or True)
+    assert all("createIndex" not in (item["code"] or "") for item in prose)
+
+
+def test_current_docs_urls_skip_versioned_books():
+    assert is_current_docs_url("https://www.mongodb.com/docs/manual/sitemap-0.xml")
+    assert is_current_docs_url("https://www.mongodb.com/docs/drivers/node/current/sitemap-0.xml")
+    assert is_current_docs_url("https://www.mongodb.com/docs/atlas/cli/current/foo")
+    assert not is_current_docs_url("https://www.mongodb.com/docs/v8.0/sitemap-0.xml")
+    assert not is_current_docs_url("https://www.mongodb.com/docs/mongosync/v1.21/install")
+    assert not is_current_docs_url("https://www.mongodb.com/docs/drivers/node/v6.x/sitemap-0.xml")
+    assert product_id("https://www.mongodb.com/docs/manual/sitemap-0.xml") == "manual"
+    assert product_id("https://www.mongodb.com/docs/atlas/cli/current/sitemap-0.xml") == "atlas/cli"
+    assert heading_anchor("Text Indexes on Self-Managed Deployments") == (
+        "text-indexes-on-self-managed-deployments"
+    )
+    assert heading_anchor("$encStr Support") == "encstr-support"
+    sitemap = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://www.mongodb.com/docs/manual/administration/install-community-linux/</loc></url>
+  <url><loc>https://www.mongodb.com/docs/manual/administration/install-community-linux/?linux-distro=ubuntu&amp;linux-method=pkg</loc></url>
+</urlset>
+"""
+    pages = parse_page_sitemap(sitemap, "manual")
+    assert [page.url for page in pages] == [
+        "https://www.mongodb.com/docs/manual/administration/install-community-linux/"
+    ]
+
+
+def test_doc_passage_opens_the_heading():
+    url = "https://www.mongodb.com/docs/manual/core/indexes/index-types/index-text"
+    doc = passage_document(
+        asset_type="doc",
+        asset_id="/docs/manual/core/indexes/index-types/index-text",
+        title="Text Indexes on Self-Managed Deployments",
+        url=url,
+        parent={
+            "type": "manual",
+            "id": "manual",
+            "title": "Database Manual",
+            "url": "https://www.mongodb.com/docs/manual/",
+        },
+        chunk_index=1,
+        text="Use Cases. An online shop stores a description.",
+        attrs={"anchor": "use-cases", "product": "manual"},
+    )
+    assert doc["parent"]["type"] == "manual"
+    assert "code" not in doc
+    payload = with_passage_hrefs(
+        {
+            "groups": [
+                {
+                    "assets": [
+                        {
+                            "type": "doc",
+                            "url": url,
+                            "passages": [{"anchor": "use-cases"}],
+                        }
+                    ]
+                }
+            ]
+        }
+    )
+    assert payload["groups"][0]["assets"][0]["passages"][0]["href"] == url + "#use-cases"
+    with pytest.raises(ValueError):
+        passage_document(
+            asset_type="doc",
+            asset_id="/docs/manual/x",
+            title="X",
+            chunk_index=0,
+            text="missing parent",
+        )
 
 
 def test_post_state_skips_a_current_contiguous_post():

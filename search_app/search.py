@@ -327,6 +327,7 @@ def group_passages(
                     "start_ms": doc.get("start_ms"),
                     "end_ms": doc.get("end_ms"),
                     "start_line": (doc.get("attrs") or {}).get("start_line"),
+                    "anchor": (doc.get("attrs") or {}).get("anchor"),
                     "audio_url": doc.get("audio_url") or "",
                 }
             )
