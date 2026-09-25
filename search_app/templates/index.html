@@ -1,23 +1,26 @@
 {% extends "base.html" %}
+{% block topbar_links %}
+<button type="button" id="bag-toggle" class="bag-toggle" aria-expanded="false" aria-controls="bag-panel">
+  Drip Pack <span id="bag-count" class="bag-count">0</span>
+</button>
+{% endblock %}
 {% block body %}
-<aside id="bag-dock" class="bag-dock">
-  <button type="button" id="bag-toggle" class="bag-toggle" aria-expanded="false" aria-controls="bag-panel">
-    Clip bag <span id="bag-count" class="bag-count">0</span>
-  </button>
-  <div id="bag-panel" class="bag-panel" hidden>
-    <div class="bag-head">
-      <h2>Clip bag</h2>
-      <div class="bag-actions">
-        <button type="button" id="bag-copy" class="play-at">Copy all</button>
-        <button type="button" id="bag-clear" class="play-at">Clear</button>
-      </div>
+<div id="bag-panel" class="bag-panel" hidden>
+  <div class="bag-head">
+    <h2>Drip Pack</h2>
+    <div class="bag-actions">
+      <button type="button" id="bag-copy" class="play-at">Copy all</button>
+      <button type="button" id="bag-clear" class="play-at">Clear</button>
     </div>
-    <p class="bag-empty" id="bag-empty">Add snippets while you listen, then copy the bag for a champion.</p>
-    <ul id="bag-list" class="bag-list"></ul>
   </div>
-</aside>
+  <p class="bag-empty" id="bag-empty">Add snippets while you listen, then copy the pack for a champion.</p>
+  <ul id="bag-list" class="bag-list"></ul>
+</div>
 
 <header class="mast">
+  <div class="logo-mark" aria-hidden="true">
+    <img src="{{ url_for('static', filename='img/mongodb-leaf.png') }}" alt="">
+  </div>
   <p class="kicker">Atlas Search · Voyage auto-embed</p>
   <h1>Find the episode. Hear the passage.</h1>
   <p class="lede">Search MongoDB Podcast and YouTube transcripts by topic. Keyword hits use Atlas Search; meaning uses Voyage AI auto-embeddings on each chunk. MongoDB <code>$rankFusion</code> blends the two. YouTube clips open at <code>&amp;t=</code> on youtube.com.</p>
@@ -25,6 +28,10 @@
 
 <form id="search-form" class="search-form" action="/api/search" method="get" role="search">
   <label class="sr-only" for="q">Search transcripts</label>
+  <svg class="search-icon" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+    <circle cx="11" cy="11" r="7"></circle>
+    <path stroke-linecap="round" d="M20 20l-3.5-3.5"></path>
+  </svg>
   <input id="q" name="q" type="search" placeholder="Try ransomware, CRISPR, sticky inflation…" autocomplete="off" autofocus>
   <button type="submit">Search</button>
 </form>

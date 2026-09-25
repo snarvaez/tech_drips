@@ -1,24 +1,16 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Play clip · Transcript Search</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}?v=clip2">
-</head>
-<body>
-  <div class="shell listen-shell">
-    <p class="kicker"><a href="{{ url_for('main.index') }}">Transcript Search</a></p>
-    <h1 id="listen-title">Loading clip…</h1>
-    <p class="lede" id="listen-meta"></p>
-    <p class="status" id="listen-status">Seeking to the matched moment.</p>
-    <div class="player listen-player">
-      <audio id="clip-audio" controls preload="auto"></audio>
-    </div>
+{% extends "base.html" %}
+{% block title %}Play clip · Transcript Search{% endblock %}
+{% block body %}
+<header class="mast">
+  <p class="kicker"><a href="{{ url_for('main.index') }}">Transcript Search</a></p>
+  <h1 id="listen-title">Loading clip…</h1>
+  <p class="lede" id="listen-meta"></p>
+  <p class="status" id="listen-status">Seeking to the matched moment.</p>
+  <div class="player listen-player">
+    <audio id="clip-audio" controls preload="auto"></audio>
   </div>
-  <script src="{{ url_for('static', filename='js/listen.js') }}?v=assets1"></script>
-</body>
-</html>
+</header>
+{% endblock %}
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/listen.js') }}?v=mdb1"></script>
+{% endblock %}

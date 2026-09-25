@@ -278,7 +278,7 @@ $(function () {
       var id = $(this).data("id");
       $(this)
         .toggleClass("is-on", inBag(id))
-        .attr("title", inBag(id) ? "Remove from bag" : "Add to bag")
+        .attr("title", inBag(id) ? "Remove from Drip Pack" : "Add to Drip Pack")
         .html(inBag(id) ? ICON_CHECK : ICON_PLUS);
     });
   }
@@ -412,7 +412,7 @@ $(function () {
           $row.append($copy);
           var $add = $('<button type="button" class="icon-btn add-clip"></button>')
             .attr({
-              title: inBag(clip.id) ? "Remove from bag" : "Add to bag",
+              title: inBag(clip.id) ? "Remove from Drip Pack" : "Add to Drip Pack",
               "data-id": clip.id,
             })
             .toggleClass("is-on", inBag(clip.id))

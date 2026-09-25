@@ -12,6 +12,9 @@ def test_home_renders_without_mongo():
     response = client.get("/")
     assert response.status_code == 200
     assert b"Find the episode" in response.data
+    assert b"Drip Pack" in response.data
+    assert b"Clip bag" not in response.data
+    assert b"Outfit" in response.data
     assert b"jquery" in response.data.lower()
 
 
