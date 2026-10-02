@@ -3,6 +3,11 @@ import os
 
 import pytest
 
+from search_app.indexes import (
+    CODE_VECTOR_INDEX_DEFINITION,
+    SEARCH_INDEX_DEFINITION,
+    VECTOR_INDEX_DEFINITION,
+)
 from search_app.schema import coerce, passage_document, passage_from_legacy
 from search_app.blog import article_from_html, parse_sitemap
 from search_app.docs import (
@@ -185,6 +190,24 @@ def test_spotify_and_apple_timestamp_urls():
         )
         == "0T15bGPizAqgJgQA3rnsv4"
     )
+
+
+def test_index_definitions_match_the_live_atlas_additions():
+    episode_title = SEARCH_INDEX_DEFINITION["mappings"]["fields"]["episode_title"]
+    assert episode_title["analyzer"] == "lucene.english"
+    assert episode_title["multi"]["fuzzy"]["analyzer"] == "lucene.standard"
+    vector_filters = {
+        field["path"]
+        for field in VECTOR_INDEX_DEFINITION["fields"]
+        if field["type"] == "filter"
+    }
+    code_filters = {
+        field["path"]
+        for field in CODE_VECTOR_INDEX_DEFINITION["fields"]
+        if field["type"] == "filter"
+    }
+    assert "parent.type" in vector_filters
+    assert "parent.type" not in code_filters
 
 
 def test_lexical_pipeline_uses_fuzzy_on_standard_multi_fields():

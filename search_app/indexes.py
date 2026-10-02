@@ -90,6 +90,7 @@ VECTOR_INDEX_DEFINITION: dict[str, Any] = {
         {"type": "filter", "path": "asset.type"},
         {"type": "filter", "path": "asset.id"},
         {"type": "filter", "path": "parent.id"},
+        {"type": "filter", "path": "parent.type"},
     ]
 }
 
@@ -132,6 +133,7 @@ SEARCH_INDEX_DEFINITION: dict[str, Any] = {
         "dynamic": False,
         "fields": {
             "text": _string_with_fuzzy(),
+            "episode_title": _string_with_fuzzy(),
             "asset": {
                 "type": "document",
                 "fields": {
