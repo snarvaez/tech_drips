@@ -94,6 +94,8 @@ def parse_sitemap(xml_text: str) -> list[SitemapEntry]:
             continue
         lastmod = (node.findtext("sm:lastmod", default="", namespaces=_SITEMAP_NS) or "").strip()
         entries.append(SitemapEntry(url=loc, lastmod=lastmod[:10] or None))
+    # ISO dates sort lexicographically. A missing lastmod stays at the end.
+    entries.sort(key=lambda entry: entry.lastmod or "", reverse=True)
     return entries
 
 

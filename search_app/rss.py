@@ -98,4 +98,6 @@ def parse_feed(xml_bytes: bytes) -> tuple[str, str, list[Episode]]:
                 anchor_id=anchor_id,
             )
         )
+    undated = datetime.min.replace(tzinfo=timezone.utc)
+    episodes.sort(key=lambda episode: episode.published_at or undated, reverse=True)
     return show_title, author, episodes

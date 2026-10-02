@@ -25,6 +25,14 @@ class YoutubeVideo:
     published_at: Optional[datetime]
 
 
+def newest_videos(videos: list[YoutubeVideo], limit: int | None = None) -> list[YoutubeVideo]:
+    undated = datetime.min.replace(tzinfo=timezone.utc)
+    ordered = sorted(videos, key=lambda video: video.published_at or undated, reverse=True)
+    if limit:
+        return ordered[:limit]
+    return ordered
+
+
 def list_channel_videos(limit: int | None = None) -> list[YoutubeVideo]:
     import yt_dlp
 
@@ -33,9 +41,9 @@ def list_channel_videos(limit: int | None = None) -> list[YoutubeVideo]:
         "extract_flat": "in_playlist",
         "skip_download": True,
         "no_warnings": True,
+        # Flat entries only carry "3 weeks ago". That is enough to order the tab.
+        "extractor_args": {"youtubetab": {"approximate_date": [""]}},
     }
-    if limit:
-        opts["playlistend"] = limit
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(CHANNEL_URL, download=False)
     videos: list[YoutubeVideo] = []
@@ -62,7 +70,7 @@ def list_channel_videos(limit: int | None = None) -> list[YoutubeVideo]:
                 published_at=published,
             )
         )
-    return videos
+    return newest_videos(videos, limit)
 
 
 def fetch_caption_cues(video_id: str) -> list[Cue]:

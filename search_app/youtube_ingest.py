@@ -105,7 +105,12 @@ def youtube_progress(collection: Collection, video_id: str) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--force", action="store_true")
-    parser.add_argument("--limit", type=int, default=0, help="Max videos to process (0 = all)")
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="Max videos to consider, newest first (0 = all)",
+    )
     parser.add_argument(
         "--max-new",
         type=int,

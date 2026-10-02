@@ -1,5 +1,6 @@
 import json
 import os
+from datetime import datetime, timezone
 
 import pytest
 
@@ -10,6 +11,8 @@ from search_app.indexes import (
 )
 from search_app.schema import coerce, passage_document, passage_from_legacy
 from search_app.blog import article_from_html, parse_sitemap
+from search_app.rss import parse_feed
+from search_app.youtube import YoutubeVideo, newest_videos
 from search_app.docs import (
     heading_anchor,
     is_current_docs_url,
@@ -419,6 +422,28 @@ def test_passage_href_for_a_post_opens_the_article():
     assert "/listen" not in href
 
 
+def test_parse_feed_returns_newest_episodes_first():
+    xml = b"""<?xml version="1.0"?>
+    <rss><channel><title>Show</title>
+      <item><guid>old</guid><title>Old</title>
+        <pubDate>Mon, 01 Jan 2024 00:00:00 +0000</pubDate></item>
+      <item><guid>new</guid><title>New</title>
+        <pubDate>Mon, 02 Mar 2026 00:00:00 +0000</pubDate></item>
+      <item><guid>none</guid><title>Undated</title></item>
+    </channel></rss>"""
+    _, _, episodes = parse_feed(xml)
+    assert [episode.guid for episode in episodes] == ["new", "old", "none"]
+
+
+def test_newest_videos_orders_by_publish_date():
+    videos = [
+        YoutubeVideo("old", "Old", "u", None, datetime(2024, 1, 1, tzinfo=timezone.utc)),
+        YoutubeVideo("new", "New", "u", None, datetime(2026, 3, 2, tzinfo=timezone.utc)),
+        YoutubeVideo("none", "None", "u", None, None),
+    ]
+    assert [video.video_id for video in newest_videos(videos, limit=2)] == ["new", "old"]
+
+
 def test_sitemap_keeps_english_blog_posts_only():
     xml = """<?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
@@ -427,14 +452,16 @@ def test_sitemap_keeps_english_blog_posts_only():
   <url><loc>https://www.mongodb.com/company/bloghow-to-select-for-update-inside-mongodb-transactions</loc></url>
   <url><loc>https://www.mongodb.com/company/blog/channel/home</loc></url>
   <url><loc>https://www.mongodb.com/company/blog/innovating-with-mongodb-customer-successes-may-2025/</loc><lastmod>2026-08-04</lastmod></url>
+  <url><loc>https://www.mongodb.com/company/blog/undated-post</loc></url>
 </urlset>
 """
     entries = parse_sitemap(xml)
     assert [entry.url for entry in entries] == [
-        "https://www.mongodb.com/company/blog/technical/prisma-next",
         "https://www.mongodb.com/company/blog/innovating-with-mongodb-customer-successes-may-2025/",
+        "https://www.mongodb.com/company/blog/technical/prisma-next",
+        "https://www.mongodb.com/company/blog/undated-post",
     ]
-    assert entries[0].lastmod == "2026-06-03"
+    assert entries[0].lastmod == "2026-08-04"
 
 
 def test_rich_text_sections_keep_headings_and_code():

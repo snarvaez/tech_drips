@@ -113,7 +113,7 @@ Each Gunicorn worker process owns one `MongoClient` (created after fork; `preloa
 python -m search_app.podcast_ingest
 ```
 
-Pulls the RSS feed for [The MongoDB Podcast](https://podcasts.apple.com/us/podcast/the-mongodb-podcast/id1500452446) and stores Spotify `podcast:transcript` SRT files as chunked documents. Episodes without an SRT can be transcribed on Apple Silicon (ffmpeg + mlx-whisper):
+Pulls the RSS feed for [The MongoDB Podcast](https://podcasts.apple.com/us/podcast/the-mongodb-podcast/id1500452446) and stores Spotify `podcast:transcript` SRT files as chunked documents, newest episode first. Episodes without an SRT can be transcribed on Apple Silicon (ffmpeg + mlx-whisper):
 
 ```bash
 python -m search_app.podcast_ingest --transcribe
@@ -125,7 +125,7 @@ YouTube (MongoDB channel captions, same chunk + auto-embed + timestamp flow):
 python -m search_app.youtube_ingest
 ```
 
-Uses `yt-dlp` to list https://www.youtube.com/user/mongodb and timed English captions. Share links are `https://www.youtube.com/watch?v=ID&t=123s`.
+Uses `yt-dlp` to list https://www.youtube.com/user/mongodb and timed English captions, newest video first, so `--max-new` takes the latest videos that are not already stored. Share links are `https://www.youtube.com/watch?v=ID&t=123s`.
 
 YouTube blocks datacenter IPs and bursts. Run from a home/residential network, captions only (no audio download), in small daily batches:
 
@@ -147,7 +147,7 @@ MongoDB Blog (same passage collection, chunk size, and hybrid ranker). Hits open
 python -m search_app.blog_ingest
 ```
 
-Reads the English catalog at https://www.mongodb.com/sitemap-blog-pages.xml. Posts already stored at that sitemap `lastmod` are skipped. `--max-new` caps how many new posts to write; `--delay` defaults to 0.4 seconds between fetches.
+Reads the English catalog at https://www.mongodb.com/sitemap-blog-pages.xml and walks it newest `lastmod` first. Posts already stored at that sitemap `lastmod` are skipped. `--max-new` caps how many new posts to write; `--delay` defaults to 0.4 seconds between fetches.
 
 GitHub source (one repository at a time). Markdown stays on the `voyage-4` index. Source is embedded with `voyage-code-4` on the `code` field. A grounded paragraph on each source file is what a use-case query matches:
 
