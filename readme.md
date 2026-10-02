@@ -1,22 +1,34 @@
-# Apple Podcast transcripts
+# Tech Drips
 
-Two pieces live in this repo:
+Tech Drips is a searchable store of technical content. Podcasts, YouTube videos, blog posts, documentation, and source code are cut into small passages and kept in one MongoDB collection, `TechDrip.passages`. A hybrid search page ranks those passages together.
 
-1. `podcast_transcripts.py` — download / transcribe Apple Podcast episodes when a transcript exists.
-2. **Transcript Search** — a Flask + PyMongo app that stores test transcripts in MongoDB Atlas, indexes them with Atlas Search and Voyage AI auto-embeddings, and lets you search by topic.
+The first sources checked in are MongoDB's own podcast, YouTube channel, blog, documentation, and developer repositories. The passage model is not tied to one publisher. A new show, channel, site, or repository is another asset with the same fields. `code_ingest` already takes any GitHub `--org` and `--repo`. `youtube_ingest --url` takes one video URL. The other commands read the MongoDB feed, channel, or sitemap named in that module.
 
-## Transcript Search
+## Search
 
 Stack: **Flask**, **PyMongo**, **Jinja2 / HTML / jQuery**, **Gunicorn + Nginx**, **MongoDB Atlas**.
 
 Search is hybrid:
 
-- **Keyword:** Atlas Search on `text`, `asset.title`, and `parent.title` (English analyzer, fuzzy, highlights).
-- **Semantic:** MongoDB Vector Search `autoEmbed` on `text` with the Voyage AI `voyage-4` model. Atlas generates embeddings at index time and again at query time, so the app never stores vectors or calls Voyage directly.
+- **Keyword:** Atlas Search on `text`, `asset.title`, `parent.title`, and `code` (English analyzer, fuzzy, highlights).
+- **Semantic:** MongoDB Vector Search `autoEmbed` on `text` with Voyage `voyage-4`. Atlas embeds at index time and at query time. The app does not store vectors or call Voyage itself.
+- **Code:** a second auto-embed index on `code` with Voyage `voyage-code-4`. Prose stays on `text`. A file with no `code` field is not embedded there.
+
+Hits are grouped under their parent (a podcast, channel, blog, repository, or manual). A saved set of passages is a Drip Pack in the page. A podcast or YouTube hit opens at that passage's timestamp. A post, doc, or file hit opens the article, heading, or source line.
 
 ### Data model
 
-Episode transcripts are unbounded, so they are **not** stored as a growing array on a show document (that would blow past the 16MB BSON limit and wreck the working set). Each searchable passage is its own small document in `TechDrip.passages`. `asset` is the episode, video, repo, or snippet. `parent` is present only for an episode (podcast) or a video (channel). A repo or a code snippet has no parent. Show and channel titles are copied onto each passage so a search hit does not need `$lookup`.
+A transcript, page, or file is unbounded, so it is stored as many small documents instead of one growing array. Each document is one passage. `asset` is the episode, video, post, file, doc, repo, or snippet. `parent` is the container, when there is one. A repo or a snippet has no parent. The parent title is copied onto the passage, so a hit does not need `$lookup`.
+
+| `asset.type` | `parent.type` | What a passage is |
+|---|---|---|
+| `episode` | `podcast` | Timed transcript chunk |
+| `video` | `channel` | Timed caption chunk |
+| `post` | `blog` | Article chunk |
+| `doc` | `manual` | Documentation chunk |
+| `file` | `repository` | Source file chunk (`text` is a short label, `code` is the source) |
+| `repo` | none | A repository with no parent |
+| `snippet` | none | A standalone snippet |
 
 ```json
 {
@@ -39,18 +51,21 @@ Episode transcripts are unbounded, so they are **not** stored as a growing array
 }
 ```
 
-A YouTube video uses `asset.type: "video"` and `parent.type: "channel"`. A blog post uses `asset.type: "post"` and `parent.type: "blog"`. A GitHub repo (`repo`) or a code snippet (`snippet`) omits `parent`. Platform ids (Spotify, Apple, YouTube) and blog slug, channel, and sitemap date live under `attrs`.
+Platform ids (Spotify, Apple, YouTube), blog slug, doc heading, and the source path live under `attrs`.
 
 Indexes:
 
 | Name | Type | Purpose |
 |------|------|---------|
-| `passage_search_index` | Atlas Search | Lexical search + highlighting + fuzzy multi-fields |
-| `passage_vector_index` | Vector Search `autoEmbed` | Voyage `voyage-4` embeddings on `text` |
+| `passage_search_index` | Atlas Search | Lexical search, highlighting, fuzzy multi-fields |
+| `passage_vector_index` | Vector Search `autoEmbed` | Voyage `voyage-4` embeddings on `text`. Filterable by `asset.type`, `asset.id`, `parent.id`, and `parent.type` |
+| `passage_code_index` | Vector Search `autoEmbed` | Voyage `voyage-code-4` embeddings on `code` |
 | `asset_chunk` | Classic unique | `(asset.type, asset.id, chunk_index)` |
 | `asset_id` | Classic | Clip lookup by asset id |
-| `parent_published` | Classic | Listing by show or channel |
+| `parent_published` | Classic | Listing by parent |
 | `asset_type_published` | Classic | Listing by asset type |
+
+`python -m search_app.seed` and `python -m search_app.migrate_schema` create or update these definitions. An index added on the cluster has to be added to `search_app/indexes.py`, or the next setup run will drop it.
 
 Existing `podcasts` documents move to `passages` with:
 
@@ -60,7 +75,7 @@ python -m search_app.migrate_schema
 
 ### Setup
 
-Atlas needs Vector Search (automated embeddings is a preview feature on Atlas). Use a database user and allow your IP under Network Access.
+Atlas needs Vector Search. Automated embeddings are a preview feature. Use a database user and allow your IP under Network Access.
 
 ```bash
 python3 -m venv .venv
@@ -70,7 +85,7 @@ cp .env.example .env
 # edit .env and set MONGODB_URI
 ```
 
-Seed test transcripts **before** the first index build when you can — Automated Embedding’s initial sync is faster on a prepopulated collection:
+Seed sample passages before the first index build when you can. Automated embedding's initial sync is faster on a collection that already has documents:
 
 ```bash
 python -m search_app.seed
@@ -82,11 +97,11 @@ Dev server:
 flask --app wsgi:app run --debug --port 5000
 ```
 
-Open http://127.0.0.1:5000 and search for topics such as `ransomware`, `CRISPR`, `sticky inflation`, or `passkeys`. Matches are grouped under their show, channel, or top-level asset.
+Open http://127.0.0.1:5000 and search. Matches are grouped under their show, channel, blog, manual, or repository.
 
 Health check: `GET /health`.
 
-Search API — same grouped JSON the page renders (`groups` → `assets` → `passages`, with the playable `href` on each passage):
+Search API — the same grouped JSON the page renders (`groups` → `assets` → `passages`, with a playable `href` on each passage):
 
 ```bash
 curl -sS 'http://127.0.0.1:5000/api/search?q=ransomware'
@@ -107,70 +122,67 @@ Gunicorn binds `127.0.0.1:8000`. `deploy/nginx.conf` reverse-proxies port 80 to 
 
 Each Gunicorn worker process owns one `MongoClient` (created after fork; `preload_app = False`). Pool settings are in `search_app/db.py`.
 
-### Ingest The MongoDB Podcast
+## Ingest
+
+Each ingest skips content it already treats as current. `--force` writes it again. Within an asset that is rewritten, extra trailing chunks are deleted. An asset that disappears from the source is left in the collection. Podcast, YouTube, and blog walk newest first, so `--max-new` takes the latest items that are not already stored.
+
+### Podcast
 
 ```bash
 python -m search_app.podcast_ingest
-```
-
-Pulls the RSS feed for [The MongoDB Podcast](https://podcasts.apple.com/us/podcast/the-mongodb-podcast/id1500452446) and stores Spotify `podcast:transcript` SRT files as chunked documents, newest episode first. Episodes without an SRT can be transcribed on Apple Silicon (ffmpeg + mlx-whisper):
-
-```bash
 python -m search_app.podcast_ingest --transcribe
 ```
 
-YouTube (MongoDB channel captions, same chunk + auto-embed + timestamp flow):
+Reads the RSS feed named in `search_app/rss.py` (The MongoDB Podcast, newest episode first) and stores `podcast:transcript` SRT files as timed chunks. `--transcribe` covers episodes that have no SRT, using ffmpeg and mlx-whisper on Apple Silicon. An episode that already has a timed chunk is skipped, including when the SRT later changes.
+
+### YouTube
 
 ```bash
 python -m search_app.youtube_ingest
-```
-
-Uses `yt-dlp` to list https://www.youtube.com/user/mongodb and timed English captions, newest video first, so `--max-new` takes the latest videos that are not already stored. Share links are `https://www.youtube.com/watch?v=ID&t=123s`.
-
-YouTube blocks datacenter IPs and bursts. Run from a home/residential network, captions only (no audio download), in small daily batches:
-
-```bash
 python -m search_app.youtube_ingest --max-new 40 --delay 8
+python -m search_app.youtube_ingest --url 'https://www.youtube.com/watch?v=VIDEO_ID'
 ```
 
-To keep going overnight (skips finished videos; exponential backoff on IP block: 15 min → 30 min → … cap 6 h):
+The catalog walk lists the channel in `search_app/youtube.py` (MongoDB on YouTube) and pulls timed English captions with `yt-dlp`, newest video first. `--url` ingests that video only. Watch, `youtu.be`, embed, shorts, and live links all work. A video already stored complete is skipped unless you pass `--force`. Share links are `https://www.youtube.com/watch?v=ID&t=123s`.
+
+YouTube blocks datacenter IPs and bursts. Run from a home network, captions only, in small batches. To keep going overnight (skips finished videos; backoff on an IP block runs from 15 minutes up to 6 hours):
 
 ```bash
 python -m search_app.youtube_loop --max-new 40 --delay 8 --batch-pause 600
 ```
 
-Ctrl+C stops the loop. Already-ingested videos are skipped.
+Ctrl+C stops the loop.
 
-MongoDB Blog (same passage collection, chunk size, and hybrid ranker). Hits open the article:
+### Blog
 
 ```bash
 python -m search_app.blog_ingest
 ```
 
-Reads the English catalog at https://www.mongodb.com/sitemap-blog-pages.xml and walks it newest `lastmod` first. Posts already stored at that sitemap `lastmod` are skipped. `--max-new` caps how many new posts to write; `--delay` defaults to 0.4 seconds between fetches.
+Reads the sitemap named in `search_app/blog.py` (the English MongoDB Blog) and walks it newest `lastmod` first. A post is skipped when its chunks are complete and already at that sitemap date. `--max-new` caps how many posts to write. `--delay` defaults to 0.4 seconds between fetches. Hits open the article.
 
-GitHub source (one repository at a time). Markdown stays on the `voyage-4` index. Source is embedded with `voyage-code-4` on the `code` field. A grounded paragraph on each source file is what a use-case query matches:
-
-```bash
-python -m search_app.code_ingest --repo typescript-multiplayer-gaming-example
-```
-
-Hits open the file on GitHub at the chunk's line. Set `XAI_API_KEY` to write those paragraphs with Grok; without it, the paragraph is the file path, identifiers that occur in the file, and the README's opening description.
-
-MongoDB Docs (current English books only; old versioned manuals are skipped). Each page is fetched as Markdown. Prose uses `voyage-4`. Fenced examples use `voyage-code-4`. Hits open the docs page at the section heading:
+### Documentation
 
 ```bash
 python -m search_app.docs_ingest --product manual
 ```
 
-The default `--product manual` is the Database Manual, about 2,200 pages. `--product ''` walks every current book.
+Reads the sitemap index in `search_app/docs.py` (current English MongoDB docs; old versioned manuals are skipped). `--product manual` is the Database Manual. `--product ''` walks every current book. Each page is fetched as Markdown. Prose uses `voyage-4`. Fenced examples use `voyage-code-4`. A page is skipped when chunk 0 already has that sitemap date. Hits open the page at the section heading.
 
-### Tests that do not need Atlas
+### Source code
+
+```bash
+python -m search_app.code_ingest --org mongodb-developer --repo typescript-multiplayer-gaming-example
+```
+
+One repository at a time. `--org` and `--repo` choose the GitHub repository. Markdown stays on the `voyage-4` index. Source is embedded with `voyage-code-4` on `code`. A file whose blob sha is unchanged is skipped. Hits open the file on GitHub at the chunk's line. Set `XAI_API_KEY` to write the grounded paragraph with Grok. Without it, that paragraph is the file path, identifiers that occur in the file, and the README's opening description.
+
+## Tests
 
 ```bash
 python -m pytest tests/test_search.py
 ```
 
----
+These tests do not need Atlas.
 
-The original downloader still expects `pip install requests feedparser` (and Whisper / ffmpeg if you transcribe audio). Transcript availability varies by show.
+`podcast_transcripts.py` is the original episode downloader. It expects `requests` and `feedparser`, and Whisper plus ffmpeg when you transcribe audio. Transcript availability varies by show.
