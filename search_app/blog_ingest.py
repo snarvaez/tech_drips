@@ -31,7 +31,7 @@ from .blog import (
 from .chunking import chunk_sections
 from .config import Config
 from .indexes import apply_validator, ensure_collection
-from .ingest import CHUNK_CHARS, _client, retry_mongo
+from .podcast_ingest import CHUNK_CHARS, _client, retry_mongo
 from .schema import legacy_unset, passage_document, passage_filter
 
 SOURCE = "mongodb-blog"

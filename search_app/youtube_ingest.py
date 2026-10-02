@@ -12,7 +12,7 @@ from pymongo.collection import Collection
 
 from .chunking import chunk_cues
 from .config import Config
-from .ingest import CHUNK_CHARS, _client, retry_mongo
+from .podcast_ingest import CHUNK_CHARS, _client, retry_mongo
 from .schema import legacy_unset, passage_document, passage_filter
 from .youtube import (
     CHANNEL_AUTHOR,

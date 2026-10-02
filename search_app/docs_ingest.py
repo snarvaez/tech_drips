@@ -30,7 +30,7 @@ from .docs import (
     product_id,
 )
 from .indexes import apply_validator, ensure_collection
-from .ingest import _client, retry_mongo
+from .podcast_ingest import _client, retry_mongo
 from .schema import legacy_unset, passage_document, passage_filter
 
 SOURCE = "mongodb-docs"

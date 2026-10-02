@@ -22,7 +22,7 @@ from .chunking import chunk_sections, chunk_source, chunk_transcript
 from .config import Config
 from .describe import describe_source
 from .indexes import apply_validator, ensure_collection, ensure_search_indexes
-from .ingest import _client, retry_mongo
+from .podcast_ingest import _client, retry_mongo
 from .schema import legacy_unset, passage_document, passage_filter
 
 ORG = "mongodb-developer"

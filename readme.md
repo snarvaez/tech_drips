@@ -110,13 +110,13 @@ Each Gunicorn worker process owns one `MongoClient` (created after fork; `preloa
 ### Ingest The MongoDB Podcast
 
 ```bash
-python -m search_app.ingest
+python -m search_app.podcast_ingest
 ```
 
 Pulls the RSS feed for [The MongoDB Podcast](https://podcasts.apple.com/us/podcast/the-mongodb-podcast/id1500452446) and stores Spotify `podcast:transcript` SRT files as chunked documents. Episodes without an SRT can be transcribed on Apple Silicon (ffmpeg + mlx-whisper):
 
 ```bash
-python -m search_app.ingest --transcribe
+python -m search_app.podcast_ingest --transcribe
 ```
 
 YouTube (MongoDB channel captions, same chunk + auto-embed + timestamp flow):
