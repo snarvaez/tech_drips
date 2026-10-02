@@ -12,7 +12,8 @@ from search_app.indexes import (
 from search_app.schema import coerce, passage_document, passage_from_legacy
 from search_app.blog import article_from_html, parse_sitemap
 from search_app.rss import parse_feed
-from search_app.youtube import YoutubeVideo, newest_videos
+from search_app.youtube import YoutubeVideo, newest_videos, video_id_from_url
+from search_app.youtube_ingest import main as youtube_ingest_main
 from search_app.docs import (
     heading_anchor,
     is_current_docs_url,
@@ -433,6 +434,25 @@ def test_parse_feed_returns_newest_episodes_first():
     </channel></rss>"""
     _, _, episodes = parse_feed(xml)
     assert [episode.guid for episode in episodes] == ["new", "old", "none"]
+
+
+def test_video_id_from_url_accepts_common_youtube_links():
+    video_id = "dQw4w9WgXcQ"
+    assert video_id_from_url(f"https://www.youtube.com/watch?v={video_id}") == video_id
+    assert video_id_from_url(f"https://www.youtube.com/watch?v={video_id}&t=43s") == video_id
+    assert video_id_from_url(f"https://youtu.be/{video_id}?t=12") == video_id
+    assert video_id_from_url(f"https://www.youtube.com/shorts/{video_id}") == video_id
+    assert video_id_from_url(f"https://www.youtube.com/embed/{video_id}") == video_id
+    assert video_id_from_url(f"https://m.youtube.com/live/{video_id}") == video_id
+    assert video_id_from_url(video_id) == video_id
+    with pytest.raises(ValueError):
+        video_id_from_url("https://www.youtube.com/user/mongodb")
+
+
+def test_youtube_ingest_rejects_a_non_video_url(capsys):
+    assert youtube_ingest_main(["--url", "https://www.youtube.com/user/mongodb"]) == 1
+    captured = capsys.readouterr()
+    assert "not a YouTube video URL" in captured.err
 
 
 def test_newest_videos_orders_by_publish_date():

@@ -6,6 +6,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
+from urllib.parse import parse_qs, urlparse
 
 from .srt import Cue
 
@@ -14,6 +15,8 @@ CHANNEL_ID = "UCK_m2976Yvbx-TyDLw7n1WA"
 CHANNEL_KEY = "mongodb-youtube"
 CHANNEL_TITLE = "MongoDB on YouTube"
 CHANNEL_AUTHOR = "MongoDB"
+# The default web player answers "The page needs to be reloaded" from this network.
+PLAYER_CLIENTS = ["android", "ios", "web"]
 
 
 @dataclass
@@ -23,6 +26,82 @@ class YoutubeVideo:
     url: str
     duration: Optional[float]
     published_at: Optional[datetime]
+
+
+_VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
+
+
+def _published_at(upload: object) -> datetime | None:
+    if not upload or len(str(upload)) < 8:
+        return None
+    raw = str(upload)[:8]
+    try:
+        return datetime(int(raw[:4]), int(raw[4:6]), int(raw[6:8]), tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def video_id_from_url(value: str) -> str:
+    """Accept a watch, youtu.be, embed, shorts, or live URL, or a bare video id."""
+    text = (value or "").strip()
+    if _VIDEO_ID.fullmatch(text):
+        return text
+    parsed = urlparse(text)
+    host = (parsed.hostname or "").lower()
+    if host.startswith("www."):
+        host = host[4:]
+    if host not in {
+        "youtube.com",
+        "m.youtube.com",
+        "music.youtube.com",
+        "youtube-nocookie.com",
+        "youtu.be",
+    }:
+        raise ValueError(f"not a YouTube video URL: {value}")
+    if host == "youtu.be":
+        video_id = parsed.path.strip("/").split("/")[0]
+    else:
+        query_id = (parse_qs(parsed.query).get("v") or [""])[0]
+        if query_id:
+            video_id = query_id
+        else:
+            parts = [part for part in parsed.path.split("/") if part]
+            video_id = ""
+            for marker in ("embed", "shorts", "live", "v"):
+                if marker in parts:
+                    index = parts.index(marker)
+                    if index + 1 < len(parts):
+                        video_id = parts[index + 1]
+                        break
+    video_id = video_id.split("&")[0]
+    if _VIDEO_ID.fullmatch(video_id):
+        return video_id
+    raise ValueError(f"not a YouTube video URL: {value}")
+
+
+def video_from_url(url: str) -> YoutubeVideo:
+    """Resolve one video URL to the metadata ingest stores."""
+    import yt_dlp
+
+    video_id = video_id_from_url(url)
+    opts = {
+        "quiet": True,
+        "no_warnings": True,
+        "skip_download": True,
+        "noplaylist": True,
+        "extractor_args": {"youtube": {"player_client": PLAYER_CLIENTS}},
+    }
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+    if not info or not info.get("id"):
+        raise RuntimeError(f"no video metadata for {url}")
+    return YoutubeVideo(
+        video_id=info["id"],
+        title=(info.get("title") or info["id"]).strip(),
+        url=f"https://www.youtube.com/watch?v={info['id']}",
+        duration=info.get("duration"),
+        published_at=_published_at(info.get("upload_date") or info.get("release_date")),
+    )
 
 
 def newest_videos(videos: list[YoutubeVideo], limit: int | None = None) -> list[YoutubeVideo]:
@@ -50,16 +129,6 @@ def list_channel_videos(limit: int | None = None) -> list[YoutubeVideo]:
     for entry in info.get("entries") or []:
         if not entry or not entry.get("id"):
             continue
-        upload = entry.get("upload_date") or entry.get("release_date")
-        published = None
-        if upload and len(str(upload)) >= 8:
-            raw = str(upload)[:8]
-            try:
-                published = datetime(
-                    int(raw[:4]), int(raw[4:6]), int(raw[6:8]), tzinfo=timezone.utc
-                )
-            except ValueError:
-                published = None
         videos.append(
             YoutubeVideo(
                 video_id=entry["id"],
@@ -67,7 +136,7 @@ def list_channel_videos(limit: int | None = None) -> list[YoutubeVideo]:
                 url=entry.get("url")
                 or f"https://www.youtube.com/watch?v={entry['id']}",
                 duration=entry.get("duration"),
-                published_at=published,
+                published_at=_published_at(entry.get("upload_date") or entry.get("release_date")),
             )
         )
     return newest_videos(videos, limit)
@@ -99,7 +168,7 @@ def fetch_caption_cues_ytdlp(video_id: str) -> list[Cue]:
         "writesubtitles": True,
         "writeautomaticsub": True,
         "subtitleslangs": ["en", "en-US", "en-orig"],
-        "extractor_args": {"youtube": {"player_client": ["android", "ios", "web"]}},
+        "extractor_args": {"youtube": {"player_client": PLAYER_CLIENTS}},
     }
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(

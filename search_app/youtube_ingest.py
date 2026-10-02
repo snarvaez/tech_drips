@@ -23,6 +23,7 @@ from .youtube import (
     YoutubeVideo,
     fetch_caption_cues,
     list_channel_videos,
+    video_from_url,
 )
 
 
@@ -123,11 +124,26 @@ def main(argv: list[str] | None = None) -> int:
         default=8.0,
         help="Seconds to wait between caption fetches",
     )
+    parser.add_argument(
+        "--url",
+        help="Ingest this YouTube video URL instead of the channel catalog",
+    )
     args = parser.parse_args(argv)
 
-    print("Listing MongoDB YouTube channel…")
-    videos = list_channel_videos(limit=args.limit or None)
-    print(f"Found {len(videos)} videos")
+    if args.url:
+        try:
+            videos = [video_from_url(args.url)]
+        except ValueError as exc:
+            print(exc, file=sys.stderr)
+            return 1
+        except Exception as exc:
+            print(f"Could not resolve {args.url}: {exc}", file=sys.stderr)
+            return 1
+        print(f"Ingesting {videos[0].url}  {videos[0].title}")
+    else:
+        print("Listing MongoDB YouTube channel…")
+        videos = list_channel_videos(limit=args.limit or None)
+        print(f"Found {len(videos)} videos")
 
     client = _client()
     try:

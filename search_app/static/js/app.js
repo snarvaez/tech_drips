@@ -366,10 +366,16 @@ $(function () {
         var $ep = $('<article class="episode"></article>');
         if (!same) {
           var title = $("<h3></h3>");
-          if (asset.url) {
+          var passages = asset.passages || [];
+          var titleHref = asset.url;
+          if (passages.length) {
+            var top = passages[0];
+            titleHref = top.href || nativeHref(asset, top.start_ms) || asset.url;
+          }
+          if (titleHref) {
             title.append(
               $("<a></a>")
-                .attr({ href: asset.url, target: "_blank", rel: "noopener" })
+                .attr({ href: titleHref, target: "_blank", rel: "noopener" })
                 .text(asset.title || "")
             );
           } else {
